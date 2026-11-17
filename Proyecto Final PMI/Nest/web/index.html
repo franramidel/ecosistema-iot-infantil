@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nest · Cuna inteligente</title><link rel="stylesheet" href="/estilo.css"><script src="/app.js" defer></script></head>
+<body><header><a class="brand" href="/" aria-label="Nest, inicio"><span class="nest" aria-hidden="true">◒</span> Nest</a><span class="divider"></span><span class="product">Cuna inteligente</span><div id="account" hidden><span id="identity"></span><button id="logout" class="quiet">Salir</button></div></header>
+<main>
+<section id="login" class="login" hidden><div class="login-intro"><span class="eyebrow">Acceso familiar</span><h1>Tu cuna<br>inteligente.</h1><p>Consulta las lecturas de cada bebé y comparte el cuidado con tu familia.</p></div>
+<form id="signin" class="card stack"><h2>Iniciar sesión</h2><label>Correo electrónico<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar al panel</button></form></section>
+<div id="dashboard" hidden>
+<nav aria-label="Secciones"><button data-tab="profile" class="active">Ficha del bebé</button><button data-tab="hardware">Dispositivos</button><button data-tab="people" id="people-tab">Personas</button></nav>
+<section id="profile"><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1 id="child-title">Ficha del bebé</h1></div><div class="actions"><label id="selector-box">Bebé seleccionado<select id="selector"></select></label><button id="add-child" class="secondary">Nuevo perfil</button></div></div>
+<div id="empty-profile" class="card"><h2>Aún no hay perfiles</h2><p id="empty-help"></p></div>
+<div id="child-panel"><div class="meta"><span id="child-ref"></span><button id="rename" class="link">Editar nombre</button></div>
+<div class="overview"><article class="card"><div class="cardhead"><h2>Lecturas</h2><select id="metric" aria-label="Medida del gráfico"></select></div><div id="latest"></div><canvas id="graph" role="img" aria-label="Historial de lecturas"></canvas><p id="graph-info" class="muted"></p></article><article class="card"><h2>Dispositivos del bebé</h2><div id="child-devices"></div></article></div>
+<article class="card"><div class="cardhead"><h2>Historial del bebé</h2><a id="report" class="secondary" download>Exportar CSV</a></div><div id="history"></div></article></div></section>
+<section id="hardware" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Dispositivos</h1></div><button id="add-device">Registrar dispositivo</button></div><div class="card"><h2>Inventario familiar</h2><div id="inventory"></div></div></section>
+<section id="people" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Personas</h1></div><button id="add-member">Crear cuenta</button></div><div class="card"><h2>Acceso a la familia</h2><div id="members"></div></div></section>
+</div></main>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<dialog id="modal"><form id="editor" class="stack"><div class="cardhead"><h2 id="modal-title"></h2><button class="quiet" id="close" aria-label="Cerrar" type="button">Cerrar</button></div><div class="stack" id="fields"></div><p id="form-error" role="alert" hidden></p><button id="confirm">Guardar</button></form></dialog>
+</body></html>
