@@ -38,11 +38,16 @@ def password_hash(password, salt=None):
 
 
 class Local:
+    sync_mode = "sse"
+
     def __init__(self, path):
         self.path = str(path)
         self.dummy = password_hash(uid())
         with self.connection() as db:
             db.executescript(SCHEMA)
+
+    def sync_config(self, session):
+        return {"mode": self.sync_mode}
 
     @contextmanager
     def connection(self, write=False):

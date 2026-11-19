@@ -6,11 +6,14 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPCookieProcessor, Request
+from unittest.mock import patch
 
 from app import Application
 from cuna.common import instant, uid
+from cuna.cloud import Cloud
 from cuna.local import Local, password_hash
 
 
@@ -115,6 +118,7 @@ class Historias(unittest.TestCase):
         child=self.child("Luna")
         assignment=self.device(child)
         other=self.member(role="admin")
+        self.assertEqual(self.admin.call("/api/sync"),(200,{"mode":"sse"}))
         with other.opener.open(self.url+"/api/stream",timeout=8) as stream:
             first=stream.readline()
             stream.readline()
@@ -125,6 +129,53 @@ class Historias(unittest.TestCase):
                 self.assertTrue(changed)
             self.assertNotEqual(first,changed)
         self.assertTrue(self.state(other)["devices"][0]["enabled"])
+
+    def test_sse_reconnect_recovers_a_missed_local_change(self):
+        child=self.child("Luna")
+        assignment=self.device(child)
+        other=self.member(role="admin")
+        self.change("operate",device_id="TEST-1",expected=assignment,enabled=True)
+
+        with other.opener.open(self.url+"/api/stream",timeout=8) as stream:
+            snapshot=stream.readline().decode().strip()
+        self.assertTrue(snapshot.startswith("data:"))
+        self.assertTrue(self.state(other)["devices"][0]["enabled"])
+
+    def test_cloud_realtime_scope_uses_each_users_jwt_and_public_key(self):
+        cloud=Cloud("https://project.example.test","sb_publishable_test","sb_secret_test")
+        linked_family,other_family=uid(),uid()
+        users={"admin":{"family_id":linked_family},"partner":{"family_id":linked_family},
+               "unrelated":{"family_id":other_family}}
+        sessions=[{"id":name,"access":"jwt-"+name,"expires":2000000000} for name in users]
+        with patch.object(cloud,"actor",side_effect=lambda session:users[session["id"]]), \
+             patch.object(cloud,"access",side_effect=lambda session:session["access"]):
+            configs=[cloud.sync_config(session) for session in sessions]
+
+        self.assertEqual([config["mode"] for config in configs],["realtime"]*3)
+        self.assertEqual(configs[0]["family_id"],configs[1]["family_id"])
+        self.assertNotEqual(configs[0]["family_id"],configs[2]["family_id"])
+        self.assertEqual([config["access_token"] for config in configs],
+                         ["jwt-admin","jwt-partner","jwt-unrelated"])
+        parts=urlsplit(configs[0]["url"])
+        self.assertEqual((parts.scheme,parts.netloc,parts.path),
+                         ("wss","project.example.test","/realtime/v1/websocket"))
+        self.assertEqual(parse_qs(parts.query),{"apikey":["sb_publishable_test"],"vsn":["1.0.0"]})
+        self.assertNotIn("sb_secret_test",configs[0]["url"])
+        self.assertEqual(configs[0]["expires_at"],2000000000)
+
+    def test_cloud_sync_endpoint_is_authenticated_and_disables_polling_stream(self):
+        self.assertEqual(Browser(self.url).call("/api/sync")[0],401)
+        cloud=Cloud("https://project.example.test","sb_publishable_test","sb_secret_test")
+        with patch.object(cloud,"actor",return_value={"family_id":"family-a"}), \
+             patch.object(cloud,"access",return_value="user-jwt"):
+            self.server.store=cloud
+            for context, _ in self.server.sessions.values():
+                context["expires"]=0
+            self.assertEqual(self.admin.call("/api/sync"),(200,{
+                "mode":"realtime","url":cloud.realtime_url,"family_id":"family-a",
+                "access_token":"user-jwt","expires_at":0
+            }))
+            self.assertEqual(self.admin.call("/api/stream")[0],404)
 
     def test_scrum18_19_traslado_captura_tardia_e_inmutabilidad(self):
         a,b=self.child("Luna"),self.child("Sol")

@@ -112,7 +112,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control","no-store")
         self.send_header("X-Content-Type-Options","nosniff")
         self.send_header("Referrer-Policy","same-origin")
-        self.send_header("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+        connect = "'self'"
+        realtime_origin = getattr(self.server.store, "realtime_origin", None)
+        if realtime_origin:
+            connect += " " + realtime_origin
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; script-src 'self'; style-src 'self'; connect-src " + connect +
+                         "; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
         for key,value in (headers or {}).items():
             self.send_header(key,value)
         self.end_headers()
@@ -157,7 +163,11 @@ class Handler(BaseHTTPRequestHandler):
         child = query.get("child",[None])[0]
         if path == "/api/state":
             self.response(self.server.store.state(session,child))
+        elif path == "/api/sync":
+            self.response(self.server.store.sync_config(session))
         elif path == "/api/stream":
+            if self.server.store.sync_mode != "sse":
+                raise Problem("Esta sesión usa Supabase Realtime.",404)
             self.stream()
         elif path == "/api/report" and child:
             out = io.StringIO(newline="")

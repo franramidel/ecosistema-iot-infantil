@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
-let state, chosen = null, tab = "profile", stream, generation = 0, onSave;
+let state, chosen = null, tab = "profile", syncResource, syncPromise, syncEpoch = 0, generation = 0, onSave;
 let noticeTimer;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const roleName = role => role === "admin" ? "Padre / administrador" : "Cuidador";
@@ -33,7 +33,7 @@ async function api(path, body) {
 }
 function showLogin() {
   generation++;
-  stream?.close(); stream = null;
+  stopSync();
   state = null; chosen = null; tab = "profile";
   if ($("modal").open) $("modal").close();
   $("account").hidden = $("dashboard").hidden = true;
@@ -46,13 +46,170 @@ async function refresh() {
   state = data; chosen = data.selected;
   $("login").hidden = true; $("dashboard").hidden = $("account").hidden = false;
   render();
-  if (!stream) {
-    stream = new EventSource("/api/stream");
-    const update = () => refresh().catch(e => { if(e.status !== 401) notice(e.message,true); });
-    stream.onmessage = update;
-    stream.addEventListener("revisar",update);
-  }
+  ensureSync();
 }
+function reportSyncError(error) {
+  if (error.status !== 401) notice(error.message,true);
+}
+function stopSync() {
+  syncEpoch++;
+  syncResource?.close();
+  syncResource = syncPromise = null;
+}
+function ensureSync() {
+  if (syncResource || syncPromise) return;
+  const epoch = syncEpoch;
+  syncPromise = api("/api/sync").then(config => {
+    if (epoch !== syncEpoch || !state) return;
+    if (config.mode === "sse") {
+      const source = new EventSource("/api/stream");
+      const update = () => refresh().catch(reportSyncError);
+      source.onmessage = update;
+      source.addEventListener("revisar",update);
+      syncResource = {close:() => source.close()};
+      return;
+    }
+    if (config.mode !== "realtime" || !config.url || !config.family_id || !config.access_token) {
+      throw Error("La configuración de sincronización de Supabase no es válida.");
+    }
+    syncResource = createRealtimeSync(epoch);
+    syncResource.connect(config);
+  }).catch(error => {
+    if (epoch === syncEpoch && state) reportSyncError(error);
+  }).finally(() => {
+    if (epoch === syncEpoch) syncPromise = null;
+  });
+}
+function createRealtimeSync(epoch) {
+  let socket, stopped = false, retryTimer, heartbeatTimer, tokenTimer, joinTimer, refreshTimer;
+  let retries = 0, nextRef = 0, joinRef, reportedFailure = false;
+  const isCurrent = () => !stopped && epoch === syncEpoch && !!state;
+  const clearConnectionTimers = () => {
+    clearInterval(heartbeatTimer);
+    clearTimeout(tokenTimer);
+    clearTimeout(joinTimer);
+    clearTimeout(refreshTimer);
+  };
+  const scheduleStateRefresh = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refresh().catch(reportSyncError),100);
+  };
+  const scheduleReconnect = (error, currentSocket) => {
+    if (!isCurrent() || retryTimer || (currentSocket && socket !== currentSocket)) return;
+    clearConnectionTimers();
+    const previous = socket;
+    socket = null;
+    if (previous && previous.readyState < WebSocket.CLOSING) previous.close();
+    if (error && !reportedFailure) {
+      notice(error.message || "Se perdió la conexión de sincronización.",true);
+      reportedFailure = true;
+    }
+    retries++;
+    const delay = Math.min(30000,1000 * (2 ** Math.min(retries - 1,5))) + Math.random() * 500;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    },delay);
+  };
+  const scheduleTokenRefresh = (config, currentSocket) => {
+    clearTimeout(tokenTimer);
+    const delay = Math.max(1000,config.expires_at * 1000 - Date.now() - 60000);
+    tokenTimer = setTimeout(async () => {
+      try {
+        const latest = await api("/api/sync");
+        if (!isCurrent() || socket !== currentSocket || currentSocket.readyState !== WebSocket.OPEN) return;
+        if (latest.mode !== "realtime" || latest.family_id !== config.family_id) {
+          throw Error("La familia de la sesión cambió. Vuelve a iniciar sesión.");
+        }
+        currentSocket.send(JSON.stringify({
+          topic:"realtime:families", event:"access_token",
+          payload:{access_token:latest.access_token}, ref:String(++nextRef), join_ref:joinRef
+        }));
+        scheduleTokenRefresh(latest,currentSocket);
+      } catch (error) {
+        scheduleReconnect(error,currentSocket);
+      }
+    },delay);
+  };
+  const connect = async initialConfig => {
+    if (!isCurrent()) return;
+    try {
+      const config = initialConfig || await api("/api/sync");
+      if (!isCurrent()) return;
+      if (config.mode !== "realtime" || !config.url || !config.family_id || !config.access_token) {
+        throw Error("La configuración de sincronización de Supabase no es válida.");
+      }
+      const currentSocket = new WebSocket(config.url);
+      socket = currentSocket;
+      currentSocket.onopen = () => {
+        if (socket !== currentSocket) return;
+        joinRef = String(++nextRef);
+        currentSocket.send(JSON.stringify({
+          topic:"realtime:families", event:"phx_join", ref:joinRef, join_ref:joinRef,
+          payload:{
+            config:{
+              broadcast:{ack:false,self:false}, presence:{key:""},
+              postgres_changes:[{
+                event:"UPDATE",schema:"public",table:"families",
+                filter:"id=eq."+config.family_id
+              }]
+            },
+            access_token:config.access_token
+          }
+        }));
+        heartbeatTimer = setInterval(() => {
+          if (currentSocket.readyState === WebSocket.OPEN) {
+            currentSocket.send(JSON.stringify({
+              topic:"phoenix",event:"heartbeat",payload:{},ref:String(++nextRef)
+            }));
+          }
+        },25000);
+        joinTimer = setTimeout(() => scheduleReconnect(
+          Error("Supabase Realtime no confirmó la suscripción."),currentSocket),10000);
+      };
+      currentSocket.onmessage = event => {
+        if (socket !== currentSocket) return;
+        let message;
+        try { message = JSON.parse(event.data); }
+        catch { scheduleReconnect(Error("Respuesta inválida de Supabase Realtime."),currentSocket); return; }
+        if (message.event === "phx_reply" && String(message.ref) === joinRef) {
+          if (message.payload?.status !== "ok") {
+            scheduleReconnect(Error("Supabase rechazó la suscripción de la familia."),currentSocket);
+            return;
+          }
+          clearTimeout(joinTimer);
+          retries = 0; reportedFailure = false;
+          scheduleTokenRefresh(config,currentSocket);
+          scheduleStateRefresh();
+        } else if (message.event === "postgres_changes") {
+          scheduleStateRefresh();
+        } else if (message.event === "phx_error" || message.event === "phx_close") {
+          scheduleReconnect(Error("Supabase cerró la suscripción de la familia."),currentSocket);
+        }
+      };
+      currentSocket.onerror = () => scheduleReconnect(
+        Error("No se pudo conectar con Supabase Realtime."),currentSocket);
+      currentSocket.onclose = () => scheduleReconnect(
+        Error("La conexión con Supabase Realtime se cerró."),currentSocket);
+    } catch (error) {
+      scheduleReconnect(error);
+    }
+  };
+  return {
+    connect,
+    close() {
+      stopped = true;
+      clearConnectionTimers();
+      clearTimeout(retryTimer);
+      const current = socket;
+      socket = null;
+      if (current && current.readyState < WebSocket.CLOSING) current.close();
+    }
+  };
+}
+document.addEventListener("visibilitychange",() => {
+  if (!document.hidden && state) refresh().catch(reportSyncError);
+});
 $("signin").onsubmit = async e => {
   e.preventDefault();
   const btn = e.target.querySelector("button");
