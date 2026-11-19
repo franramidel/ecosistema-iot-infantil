@@ -39,7 +39,7 @@ class Red:
         if self.fallos > 0:
             self.fallos -= 1
             raise OSError("sin red")
-        req = Request(url, data=data.encode(), headers=headers or {}, method="POST")
+        req = Request(url, data=data if isinstance(data, bytes) else data.encode(), headers=headers or {}, method="POST")
         try:
             with urlopen(req, timeout=5) as r:
                 return Respuesta(r.status, r.read().decode())

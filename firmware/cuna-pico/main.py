@@ -80,7 +80,7 @@ class Cliente:
         else:
             url = self.cfg.SERVIDOR_URL.rstrip("/") + ruta
             cabeceras = {"Content-Type": "application/json", "Authorization": "Bearer " + self.cfg.DEVICE_KEY}
-        r = self.requests.post(url, data=json.dumps(cuerpo), headers=cabeceras)
+        r = self.requests.post(url, data=json.dumps(cuerpo).encode("utf-8"), headers=cabeceras)
         try:
             return r.status_code, r.text
         finally:
@@ -95,7 +95,7 @@ class Cliente:
                     "at_time": ev["captured_at"], "metric_name": ev["metric"], "measurement": ev["value"],
                     "measurement_unit": ev["unit"]})
             else:
-                codigo, _ = self._post("/api/events", ev)
+                codigo, texto = self._post("/api/events", ev)
         except Exception as e:  # sin Wi-Fi, DNS, tiempo de espera...
             print("Sin conexión:", e)
             return "reintentar"
@@ -103,7 +103,7 @@ class Cliente:
             return "ok"
         if codigo in (408, 425, 429) or codigo >= 500:
             return "reintentar"
-        print("El servidor rechazó el evento ({}). Se descarta.".format(codigo))
+        print("El servidor rechazó el evento ({}). Se descarta. Motivo: {}".format(codigo, texto if self.modo != "supabase" else ""))
         return "descartar"
 
     def umbrales(self, id_dispositivo):
@@ -146,6 +146,11 @@ def ejecutar(cfg=None, requests=None, ciclos=None):
 
     def conectar():
         wlan.active(True)
+        try:  # si quedó conectada a otra red (por ejemplo tras cambiar secrets.py), se suelta para usar la configurada
+            if wlan.isconnected() and wlan.config("ssid") != cfg.WIFI_SSID:
+                wlan.disconnect()
+        except Exception:
+            pass
         if not wlan.isconnected():
             wlan.connect(cfg.WIFI_SSID, cfg.WIFI_PASSWORD)
             for _ in range(20):
