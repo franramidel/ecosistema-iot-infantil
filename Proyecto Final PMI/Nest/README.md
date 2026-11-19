@@ -36,7 +36,7 @@ Después del traslado repite con `--valor 24.1`. Para simular humedad añade `--
 2. En el editor SQL ejecuta `supabase/001_usuarios.sql` una vez. La migración crea las tablas, las políticas RLS, las funciones de escritura y el historial.
 3. En **Authentication → Users**, crea y confirma la primera cuenta con correo y contraseña. En `supabase/002_primer_administrador.sql`, sustituye `CAMBIAR@example.test` por ese correo y ejecuta el script. Crea la familia inicial y su membresía administradora. Las siguientes cuentas de esa familia se crean desde el panel.
 4. Copia `.env.example` como `.env` junto a `app.py`. Completa `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` y `SUPABASE_SECRET_KEY` con los valores del proyecto. Guarda la clave secreta sólo en el servidor. La Raspberry Pi usa su propia clave de dispositivo.
-5. Ejecuta `python app.py --supabase`, abre la misma dirección e inicia sesión con la primera cuenta de Supabase. Repite el recorrido de la demo. La demo SQLite y Supabase tienen datos independientes.
+5. En **Database → Publications**, confirma que la tabla `public.families` está incluida en la publicación `supabase_realtime` y que Realtime está habilitado para el proyecto. La migración la añade a la publicación cuando los permisos de la base lo permiten. Ejecuta `python app.py --supabase`, abre la misma dirección e inicia sesión con la primera cuenta de Supabase. Repite el recorrido de la demo. La demo SQLite y Supabase tienen datos independientes.
 
 El servidor usa la clave pública y el JWT del usuario para las lecturas y mutaciones de la familia. Comprueba el rol antes de usar la API administrativa de Auth para crear un usuario. Un trigger de PostgreSQL crea la membresía en la misma transacción que la identidad. La interfaz recibe una cookie de sesión HttpOnly con duración de ocho horas. Sirve el prototipo tras HTTPS y establece `CUNA_SECURE_COOKIE=1` si lo publicas. El servidor incluido está pensado para la demostración del curso.
 
@@ -63,7 +63,7 @@ Documentación oficial de referencia: [seguridad de contraseñas](https://supaba
 
 Usa la hora real de captura con zona horaria y un UUID nuevo por muestra. El servidor devuelve `{"child_id":"…"}` y conserva ese bebé en el evento. Las capturas tardías se resuelven con el intervalo histórico. Reintentar con el mismo UUID y contenido devuelve el mismo resultado. Un UUID reutilizado con otros datos o una captura durante un intervalo sin asignación devuelve 409. La Pi debe mantener su reloj sincronizado. Para probar desde otra máquina de la red de laboratorio, ejecuta el servidor con `--host 0.0.0.0` y pasa `--url http://IP-DE-LA-COMPUTADORA:8000` al simulador.
 
-**Consulta y sincronización.** Con la cookie de sesión, `GET /api/state?child=<UUID>` devuelve miembros visibles, inventario familiar, perfiles y las últimas 100 lecturas del bebé solicitado. La ficha filtra el inventario por `child_id`. El gráfico agrupa por medida y unidad. `GET /api/report?child=<UUID>` genera el CSV del historial completo para administradores. `GET /api/stream` emite cambios de versión por familia mediante Server-Sent Events. Cada mutación confirmada despierta a los paneles conectados para releer las filas autorizadas. El servidor también comprueba la versión cada tres segundos para detectar escrituras hechas por otro proceso mediante las funciones del módulo. La tabla `families` está publicada en Supabase Realtime para clientes del equipo que utilicen Postgres Changes.
+**Consulta y sincronización.** Con la cookie de sesión, `GET /api/state?child=<UUID>` devuelve miembros visibles, inventario familiar, perfiles y las últimas 100 lecturas del bebé solicitado. La ficha filtra el inventario por `child_id`. El gráfico agrupa por medida y unidad. `GET /api/report?child=<UUID>` genera el CSV del historial completo para administradores. En modo local, `GET /api/stream` usa Server-Sent Events y un sondeo de versión cada tres segundos para detectar escrituras de otros procesos. En modo Supabase, el panel usa Postgres Changes sobre `public.families`, filtrado al `family_id` de la sesión y validado por RLS; las notificaciones sólo invalidan el estado y cada cliente vuelve a consultar `/api/state` con su sesión autorizada. Al suscribirse o reconectarse, el panel vuelve a consultar el estado para recuperar cambios perdidos. El navegador recibe únicamente la clave publicable y el JWT de la sesión, nunca la clave secreta.
 
 **Dónde extender.** `app.py` define HTTP y sesiones. `cuna/common.py` valida entradas. `cuna/cloud.py` conecta a Auth y PostgREST. `cuna/local.py` implementa la demo. `web/` contiene el panel. Para integrar un sensor, empieza por la función de envío y conserva el identificador de la muestra hasta recibir confirmación. La actuación física, los umbrales y Telegram pertenecen a los módulos de hardware y alertas del equipo.
 
@@ -87,7 +87,7 @@ Las pruebas arrancan un servidor HTTP local y una base temporal por caso. Cubren
 | | CA2 solo el administrador crea usuarios, reasigna y exporta | `Local.change` y `export_page`; en nube, `cuna_change` y `Cloud.export_page` |
 | | CA3 el cuidador opera según permisos | `can_operate` y la acción `operate` |
 | SCRUM-17 Multicuenta | CA1 varias cuentas ven los mismos bebés y dispositivos | `family_id` compartido por las cuentas de la familia |
-| | CA2 cambios en tiempo real | `GET /api/stream` (SSE) en `app.py` y `EventSource` en `web/app.js` |
+| | CA2 cambios en tiempo real | SSE local en `GET /api/stream`; Supabase Postgres Changes desde `web/app.js`, con configuración de sesión en `GET /api/sync` |
 | SCRUM-18 Multibebé | CA1 varios perfiles | Acción `child` |
 | | CA2 datos independientes | Cada evento guarda su `child_id` |
 | | CA3 filtros y gráficos del bebé elegido | `state(selected)` y `draw()` en `web/app.js` |
@@ -97,4 +97,4 @@ Las pruebas arrancan un servidor HTTP local y una base temporal por caso. Cubren
 | | CA5 un solo bebé activo por dispositivo | Índice único `one_active` |
 | | Eventos inmutables | Triggers `keep_event` y `keep_history` (SQLite) y `immutable_event` (Supabase) |
 
-Pruebas automáticas: `python -m unittest discover -s tests -v` (6 pruebas, una por historia más concurrencia y aislamiento).
+Pruebas automáticas: `python -m unittest discover -s tests -v` (incluye sincronización local, configuración Realtime con cuentas de una misma familia y aislamiento entre familias; la entrega real de Supabase requiere verificarla con un proyecto configurado).
