@@ -183,6 +183,19 @@ const visible = (p, id) => !p.d.getElementById(id).hidden;
   await tab(c, "audit");
   ok(!visible(c, "audit"), "forzar la pestaña de auditoría no la muestra a un cuidador");
 
+  // --- SCRUM-17 CA2: lo que cambia otra cuenta (ajustes y umbrales) se refleja sin recargar; lo que se escribe sin guardar no se pisa
+  await tab(c, "control");
+  await api("/api/settings", {child_id: bebe, led_speed_s: 7.5, audio: "olas", volume: 55});
+  await api("/api/thresholds", {child_id: bebe, temp_min: 17, temp_max: 30});
+  await tab(c, "profile"); await tab(c, "control"); await sleep(600);
+  ok(c.d.getElementById("led-speed").value === "7.5" && c.d.getElementById("audio-select").value === "olas" && c.d.getElementById("volume").value === "55", "otra cuenta cambia los ajustes y el cuidador los ve sin recargar");
+  await tab(c, "profile"); await sleep(600);
+  ok(c.d.getElementById("thr-min").value === "17" && c.d.getElementById("thr-max").value === "30", "otra cuenta cambia los umbrales y el cuidador los ve sin recargar");
+  poner(admin, "led-speed", "9"); admin.d.getElementById("settings-form").dispatchEvent(new admin.w.Event("input", {bubbles: true}));
+  await api("/api/settings", {child_id: bebe, led_speed_s: 2, audio: "lluvia", volume: 10});
+  await tab(admin, "profile"); await tab(admin, "control"); await sleep(600);
+  ok(admin.d.getElementById("led-speed").value === "9", "lo que el administrador escribe sin guardar no se pisa");
+
   console.log(fallos ? "UI FALLÓ: " + fallos : "UI OK");
   process.exit(fallos ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

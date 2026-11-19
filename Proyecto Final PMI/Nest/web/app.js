@@ -492,15 +492,15 @@ $("tg-link-btn").onclick = () => tgAction($("tg-link-btn"), "/api/telegram/link"
 $("tg-unlink-btn").onclick = () => tgAction($("tg-unlink-btn"), "/api/telegram/unlink", () => tgMsg("Telegram desvinculado."));
 $("tg-test-btn").onclick = () => tgAction($("tg-test-btn"), "/api/telegram/test", () => tgMsg("Prueba en cola. Llegará en unos segundos."));
 $("tg-refresh-btn").onclick = loadTelegram;
-let thrFor = null;
+let thrFor = null, thrDirty = false, settingsDirty = false;
 function thrMsg(text, error=false) { $("thr-msg").textContent = text; $("thr-msg").classList.toggle("error", error); }
 async function loadThresholds(force=false) {
   const id = chosen;
-  if (!id || (!force && thrFor === id)) return;  // render() corre con cada lectura nueva: no pisar lo que se está escribiendo
+  if (!id || (!force && thrFor === id && thrDirty)) return;  // render() corre con cada lectura nueva: se refresca desde el servidor salvo que haya algo sin guardar
   try {
     const t = await api("/api/thresholds?child=" + encodeURIComponent(id));
     if (id !== chosen) return;
-    thrFor = id;
+    thrFor = id; thrDirty = false;
     $("thr-min").value = t.temp_min; $("thr-max").value = t.temp_max;
     chartThr = {child: id, min: t.temp_min, max: t.temp_max}; draw();
     thrMsg(!admin() ? "Solo un administrador puede cambiar los umbrales." : t.default ? "Usando los valores por defecto." : "");
@@ -740,7 +740,7 @@ async function loadControl() {
     const [sleep, settings, modules] = await Promise.all([api("/api/sleep" + query), api("/api/settings" + query), api("/api/modules" + query)]);
     if (marker !== controlEpoch || id !== chosen) return;
     renderSleep(sleep); renderModules(modules);
-    if (settingsFor !== id) { fillSettings(settings); settingsFor = id; }  // no pisar lo que se está escribiendo
+    if (settingsFor !== id || !settingsDirty) { fillSettings(settings); settingsFor = id; }  // otra cuenta cambió los ajustes: se refleja, salvo que aquí haya algo sin guardar
   } catch (err) {
     if (marker === controlEpoch) notice(err.message, true);
   }
@@ -807,6 +807,7 @@ $("modules-list").addEventListener("change", async e => {
 
 function settingsMsg(text, error=false) { $("settings-msg").textContent = text; $("settings-msg").classList.toggle("error", error); }
 function fillSettings(s) {
+  settingsDirty = false;
   $("led-speed").value = s.led_speed_s; $("audio-select").value = s.audio;
   $("volume").value = s.volume; $("volume-out").textContent = s.volume;
   for (const id of ["led-speed", "audio-select", "volume"]) $(id).disabled = !admin();
@@ -814,6 +815,8 @@ function fillSettings(s) {
   settingsMsg(!admin() ? "Solo un administrador puede cambiar estos ajustes." : s.default ? "Usando los valores iniciales." : "");
 }
 $("volume").oninput = () => $("volume-out").textContent = $("volume").value;
+$("settings-form").addEventListener("input", () => { settingsDirty = true; });
+$("thr-form").addEventListener("input", () => { thrDirty = true; });
 $("settings-form").onsubmit = async ev => {
   ev.preventDefault();
   const raw = $("led-speed").value.trim(), speed = Number(raw), volume = Number($("volume").value);
