@@ -211,6 +211,16 @@ class Cloud:
     # Telegram (SCRUM-24). Mismo contrato que Local. Las acciones del usuario llaman funciones que usan
     # auth.uid() con el token de la sesión. Solo el procesador y solicitar_notificacion usan la clave de
     # servicio, y esa clave vive en el servidor o en telegram_worker.py, nunca en el navegador.
+    def umbrales(self, session, child):
+        return self.request("/rest/v1/rpc/cuna_get_thresholds", {"child":child}, self.access(session))
+
+    def umbrales_guardar(self, session, child, minimo, maximo, ahora=None):
+        return self.request("/rest/v1/rpc/cuna_set_thresholds",
+                            {"child":child, "tmin":minimo, "tmax":maximo}, self.access(session))
+
+    def umbrales_dispositivo(self, device, secret, ahora=None):
+        return self.request("/rest/v1/rpc/cuna_device_thresholds", {"device":device, "secret":secret})
+
     # El parámetro `ahora` existe por compatibilidad con Local: aquí el reloj es el de la base de datos.
 
     def telegram_estado(self, session, ahora=None):

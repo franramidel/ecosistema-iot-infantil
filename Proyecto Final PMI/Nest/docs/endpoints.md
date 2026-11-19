@@ -5,6 +5,9 @@ Todos responden JSON con `{"error": "..."}` en los fallos, salvo la descarga cor
 | Método y ruta | Quién | Para qué |
 | --- | --- | --- |
 | `GET /api/audit` | Administrador | Página del registro unificado. Filtros `child`, `device`, `tipo`, `desde`, `hasta`, `limit` y `after` |
+| `GET /api/thresholds?child=` | Cualquier miembro | `{child_id,temp_min,temp_max,default}`. Sin guardar valen 19 y 22 |
+| `POST /api/thresholds` | Administrador | Body `{child_id,temp_min,temp_max}`. Rango −20 a 60 y mínimo menor que máximo |
+| `POST /api/device/thresholds` | Dispositivo con su clave | Body `{device_id}`. Devuelve `{temp_min,temp_max}` del bebé asignado (409 si no hay) |
 | `POST /api/audit/events` | Dispositivo con su clave | Evento propio. El bebé se deduce de la asignación |
 | `POST /api/events` | Dispositivo con su clave | Lectura de telemetría. Sin cambios |
 | `GET /api/export/xlsx` | Administrador | Descarga el Excel. Filtros `child`, `device`, `desde`, `hasta` |

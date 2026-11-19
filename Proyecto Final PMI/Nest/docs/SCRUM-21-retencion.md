@@ -75,7 +75,7 @@ El proyecto guarda datos de menores. En Costa Rica, la Ley 8968 reconoce a la pe
 
 Solo lo hace el administrador de la base, con una solicitud verificada, y debe quedar anotado fuera del sistema. No hay un script para evitar un uso accidental.
 
-SQLite: detener el servidor, hacer un respaldo, y con una conexión directa borrar los triggers `keep_event`, `keep_history`, `keep_assignments`, `audit_keep_update` y `audit_keep_delete`. Después eliminar las filas del bebé en este orden: `audit_log`, `events`, `assignments`, y luego el bebé y los dispositivos que ya no se usen. Al volver a iniciar el servidor, el esquema recrea los triggers. Hay una prueba que ejecuta este procedimiento y comprueba que la base queda sana.
+SQLite: detener el servidor, hacer un respaldo, y con una conexión directa borrar los triggers `keep_event`, `keep_history`, `keep_assignments`, `audit_keep_update` y `audit_keep_delete`. Después eliminar las filas del bebé en este orden: `notification_queue` (las que apuntan a su `audit_log` por `event_id`), `audit_log`, `events`, `assignments`, `alert_state` y `thresholds` del bebé, y luego el bebé y los dispositivos que ya no se usen. Al volver a iniciar el servidor, el esquema recrea los triggers. Hay una prueba que ejecuta este procedimiento y comprueba que la base queda sana.
 
 Supabase: en una transacción, `alter table ... disable trigger` sobre las tablas del historial, los mismos borrados en el mismo orden, y `enable trigger`. Esto requiere el rol propietario. No se ejecutó contra un proyecto real.
 

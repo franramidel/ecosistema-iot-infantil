@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aplica 001, 003, 004, 005, 006 y 007 sobre bases PostgreSQL vacías, corre los escenarios y la verificación de retención.
+# Aplica 001, 003, 004, 005, 006, 007 y 008 sobre bases PostgreSQL vacías, corre los escenarios y la verificación de retención.
 # Uso: PGURL=postgresql://postgres@localhost:5432/prueba [PGURL_VACIA=postgresql://.../otra] tests/postgres/ejecutar.sh
 # Las bases deben estar vacías y ser desechables.
 # ADVERTENCIA: nunca apuntes esto al Supabase compartido del equipo ni a producción. Inserta datos falsos.
@@ -42,11 +42,14 @@ ejecutar tests/postgres/escenario_006.sql "$PGURL"
 ejecutar supabase/007_telegram.sql "$PGURL"
 ejecutar supabase/007_telegram.sql "$PGURL"
 ejecutar tests/postgres/escenario_007.sql "$PGURL"
+ejecutar supabase/008_alertas_temperatura.sql "$PGURL"
+ejecutar supabase/008_alertas_temperatura.sql "$PGURL"
+ejecutar tests/postgres/escenario_008.sql "$PGURL"
 echo "== supabase/verificar_retencion.sql (base con datos)"; verificar "$PGURL"
 
 # B. Esquema nuevo en una base vacía, aplicando las migraciones en orden.
 if [ -n "${PGURL_VACIA:-}" ]; then
   for f in tests/postgres/stub_supabase.sql supabase/001_usuarios.sql supabase/003_auditoria.sql supabase/004_retencion.sql \
-           supabase/005_device_uuid.sql tests/postgres/escenario_005.sql supabase/006_exportacion.sql tests/postgres/escenario_006.sql supabase/007_telegram.sql tests/postgres/escenario_007.sql; do ejecutar "$f" "$PGURL_VACIA"; done
+           supabase/005_device_uuid.sql tests/postgres/escenario_005.sql supabase/006_exportacion.sql tests/postgres/escenario_006.sql supabase/007_telegram.sql tests/postgres/escenario_007.sql supabase/008_alertas_temperatura.sql tests/postgres/escenario_008.sql; do ejecutar "$f" "$PGURL_VACIA"; done
   echo "== supabase/verificar_retencion.sql (base vacía)"; verificar "$PGURL_VACIA"
 fi

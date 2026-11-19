@@ -34,7 +34,7 @@ async function api(path, body) {
 function showLogin() {
   generation++;
   stopSync();
-  state = null; chosen = null; tab = "profile";
+  state = null; chosen = null; tab = "profile"; thrFor = null;
   if ($("modal").open) $("modal").close();
   $("account").hidden = $("dashboard").hidden = true;
   $("login").hidden = false;
@@ -283,6 +283,10 @@ function render() {
   $("history").innerHTML = rows.length ? '<div class="scroll"><table><thead><tr><th>Fecha de captura</th><th>Device_ID</th><th>Medida</th><th>Lectura</th></tr></thead><tbody>'+
     rows.map(e=>'<tr><td>'+esc(date(e.captured_at))+'</td><td>'+esc(e.device_id)+'</td><td>'+esc(e.metric)+'</td><td>'+fmt(e.value)+' '+esc(e.unit)+'</td></tr>').join("")+'</tbody></table></div>' : empty("Las lecturas aparecerán aquí cuando el dispositivo envíe datos.");
   renderExport();
+  $("thr-card").hidden = !child;
+  for (const id of ["thr-min","thr-max"]) $(id).disabled = !admin();
+  $("thr-save").hidden = !admin();
+  loadThresholds();
   loadTelegram();
   draw();
 }
@@ -347,6 +351,32 @@ $("tg-link-btn").onclick = () => tgAction($("tg-link-btn"), "/api/telegram/link"
 $("tg-unlink-btn").onclick = () => tgAction($("tg-unlink-btn"), "/api/telegram/unlink", () => tgMsg("Telegram desvinculado."));
 $("tg-test-btn").onclick = () => tgAction($("tg-test-btn"), "/api/telegram/test", () => tgMsg("Prueba en cola. Llegará en unos segundos."));
 $("tg-refresh-btn").onclick = loadTelegram;
+let thrFor = null;
+function thrMsg(text, error=false) { $("thr-msg").textContent = text; $("thr-msg").classList.toggle("error", error); }
+async function loadThresholds(force=false) {
+  const id = chosen;
+  if (!id || (!force && thrFor === id)) return;  // render() corre con cada lectura nueva: no pisar lo que se está escribiendo
+  try {
+    const t = await api("/api/thresholds?child=" + encodeURIComponent(id));
+    if (id !== chosen) return;
+    thrFor = id;
+    $("thr-min").value = t.temp_min; $("thr-max").value = t.temp_max;
+    thrMsg(!admin() ? "Solo un administrador puede cambiar los umbrales." : t.default ? "Usando los valores por defecto." : "");
+  } catch (err) { thrMsg(err.message, true); }
+}
+$("thr-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const min = $("thr-min").value.trim(), max = $("thr-max").value.trim();
+  if (!min || !max || !Number.isFinite(Number(min)) || !Number.isFinite(Number(max))) return thrMsg("Escribe el mínimo y el máximo como números.", true);
+  $("thr-save").disabled = true;
+  try {
+    await api("/api/thresholds", {child_id: chosen, temp_min: Number(min), temp_max: Number(max)});
+    thrMsg("Umbrales guardados. Se aplican desde la próxima lectura.");
+    thrFor = null; await loadThresholds(true);
+    thrMsg("Umbrales guardados. Se aplican desde la próxima lectura.");
+  } catch (err) { thrMsg(err.message, true); }
+  finally { $("thr-save").disabled = false; }
+};
 function renderExport() {
   $("export-card").hidden = !admin();
   if (!admin()) return;

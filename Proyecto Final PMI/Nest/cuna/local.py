@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import timedelta
 
-from . import auditoria, migraciones, notificaciones, retencion
+from . import alertas, auditoria, migraciones, notificaciones, retencion
 from .common import Problem, device_secret, fingerprint, instant, uid
 
 SCHEMA = """
@@ -199,6 +199,9 @@ class Local:
                 raise Problem("El dispositivo estaba sin asignar en esa fecha.", 409)
             child = assignment["child_id"]
             db.execute("insert into events values (?,?,?,?,?,?,?)", (event_id, device, child, at, metric, value, unit))
+            if metric == alertas.METRICA_TEMPERATURA and unit == alertas.UNIDAD_TEMPERATURA:
+                # RF-NOT-02: el servidor decide la alerta en la misma transacción que guarda la lectura.
+                alertas.evaluar(db, row["family_id"], device, child, at, event_id, value)
             db.execute("update families set version=version+1 where id=?", (row["family_id"],))
             return {"child_id": child}
 
@@ -236,6 +239,36 @@ class Local:
 
     # Telegram (SCRUM-24). Las acciones del usuario exigen sesión. Las del procesador no reciben sesión:
     # solo las invoca el proceso del servidor o telegram_worker.py, nunca una ruta HTTP.
+
+    # Umbrales de temperatura (RF-CUN-01). Leer: cualquier miembro de la familia. Cambiar: solo administradores.
+
+    def umbrales(self, session, child):
+        with self.connection() as db:
+            family = self.actor(db, session)["family_id"]
+            self.child(db, family, child)
+            minimo, maximo, defecto = alertas.leer_umbrales(db, child)
+            return {"child_id": child, "temp_min": minimo, "temp_max": maximo, "default": defecto}
+
+    def umbrales_guardar(self, session, child, minimo, maximo, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            if me["role"] != "admin":
+                raise Problem("Se requiere el rol de administrador.", 403)
+            self.child(db, me["family_id"], child)
+            resultado = alertas.guardar_umbrales(db, me["family_id"], child, minimo, maximo, me["id"], ahora or instant())
+            db.execute("update families set version=version+1 where id=?", (me["family_id"],))
+            return resultado
+
+    def umbrales_dispositivo(self, device, secret, ahora=None):
+        """Umbrales del bebé al que está asignado el dispositivo. El firmware los usa solo para enviar al instante
+        un cruce de umbral; la decisión de alertar sigue siendo del servidor. No revela quién es el bebé."""
+        with self.connection() as db:
+            self.authenticate_device(db, device, secret)
+            child = auditoria.bebe_activo(db, device, ahora or instant())
+            if not child:
+                raise Problem("El dispositivo no está asignado a ningún bebé.", 409)
+            minimo, maximo, _ = alertas.leer_umbrales(db, child)
+            return {"temp_min": minimo, "temp_max": maximo}
 
     def telegram_estado(self, session, ahora=None):
         with self.connection() as db:

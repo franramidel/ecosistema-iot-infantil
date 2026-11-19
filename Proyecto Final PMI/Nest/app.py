@@ -186,6 +186,10 @@ class Handler(BaseHTTPRequestHandler):
             self.response(self.server.store.state(session,child))
         elif path == "/api/sync":
             self.response(self.server.store.sync_config(session))
+        elif path == "/api/thresholds":
+            if not child:
+                raise Problem("Indica el bebé con ?child=.")
+            self.response(self.umbrales().umbrales(session,child))
         elif path == "/api/audit":
             self.response(self.server.store.audit_page(session,*consulta(query)))
         elif path == "/api/stream":
@@ -247,6 +251,12 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             version = latest
 
+    def umbrales(self):
+        store = self.server.store
+        if not hasattr(store,"umbrales"):
+            raise Problem("Este almacén de datos no admite umbrales de temperatura.",501)
+        return store
+
     def telegram(self):
         store = self.server.store
         if not hasattr(store,"telegram_estado"):
@@ -296,6 +306,11 @@ class Handler(BaseHTTPRequestHandler):
             if not authorization.startswith("Bearer ") or not authorization[7:]:
                 raise Problem("Se requiere la clave del dispositivo.",403)
             result = store.ingest(device_id(data),authorization[7:],reading(data))
+        elif path == "/api/thresholds":
+            session = self.server.session(self.sid())
+            result = self.umbrales().umbrales_guardar(session,field(data,"child_id"),data.get("temp_min"),data.get("temp_max"))
+        elif path == "/api/device/thresholds":
+            result = self.umbrales().umbrales_dispositivo(device_id(data),self.device_key())
         elif path == "/api/audit/events":
             result = store.record(device_id(data),self.device_key(),evento(data))
         elif path in ("/api/telegram/link","/api/telegram/unlink","/api/telegram/test"):

@@ -180,8 +180,11 @@ class Retencion(Base):
         db.execute("pragma foreign_keys=on")
         for trigger in ("keep_event", "keep_history", "keep_assignments", "audit_keep_update", "audit_keep_delete"):
             db.execute(f"drop trigger {trigger}")
+        db.execute("delete from notification_queue where event_id in (select id from audit_log where child_id=?)", (child,))
         for tabla in ("audit_log", "events", "assignments"):
             db.execute(f"delete from {tabla} where child_id=?", (child,))
+        db.execute("delete from alert_state where child_id=?", (child,))
+        db.execute("delete from thresholds where child_id=?", (child,))
         db.execute("delete from devices where id='OLD-1'")
         db.execute("delete from children where id=?", (child,))
         db.commit()
@@ -230,7 +233,10 @@ class Respaldo(Base):
         for destino, informe in zip(destinos, informes):
             self.assertTrue(informe["ok"], informe["problemas"])
             self.assertTrue(verificar(destino)["ok"])
-            self.assertEqual(informe["conteos"]["events"], informe["conteos"]["audit_log"] - informe["conteos"]["assignments"])
+            with closing(sqlite3.connect(destino)) as db:
+                alertas = db.execute("select count(*) from audit_log where event_type like 'ALERTA_TEMPERATURA%'").fetchone()[0]
+            self.assertEqual(informe["conteos"]["events"],
+                             informe["conteos"]["audit_log"] - informe["conteos"]["assignments"] - alertas)
 
     def test_restaurar_recupera_registros_relaciones_y_servicio(self):
         child = self.sembrar(25)

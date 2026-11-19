@@ -96,3 +96,7 @@ Detalle en `SCRUM-24-telegram.md`. Esta entrega no detecta eventos críticos ni 
 - `solicitar_alerta.py --supabase` pide confirmación explícita antes de escribir y no imprime claves.
 - Las migraciones 003 a 007 llevan un aviso de que no están aprobadas para desplegar.
 - Ningún archivo contiene tokens ni claves reales. Los valores de prueba son sintéticos.
+
+
+## 8. Alertas de temperatura (Persona 3)
+Añade `008_alertas_temperatura.sql` (no aprobada para desplegar), `cuna/alertas.py`, endpoints `/api/thresholds` y `/api/device/thresholds`, la tarjeta "Umbrales de temperatura" en la web y `firmware/cuna-pico`. Toca `local.py` (`ingest` llama a `alertas.evaluar`), `migraciones.py`, `cloud.py` y `app.py`. Depende de SCRUM-24 (cola de Telegram) y SCRUM-20 (auditoría). Detalle en `SCRUM-25-alertas-temperatura.md`.

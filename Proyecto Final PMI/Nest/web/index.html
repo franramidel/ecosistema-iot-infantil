@@ -19,7 +19,10 @@
 <div id="tg-code" class="tg-code" hidden><p>Abre Telegram, busca el bot y envíale este código. Vence en 10 minutos y sirve una sola vez.</p><p><strong id="tg-code-value" class="tg-value"></strong></p><p><a id="tg-link" class="secondary" target="_blank" rel="noopener noreferrer" hidden>Abrir el bot en Telegram</a></p></div>
 <div class="tg-actions"><button id="tg-link-btn" type="button">Vincular Telegram</button><button id="tg-test-btn" class="secondary" type="button" hidden>Enviar prueba</button><button id="tg-unlink-btn" class="quiet" type="button" hidden>Desvincular</button><button id="tg-refresh-btn" class="quiet" type="button">Actualizar estado</button></div>
 <p id="tg-msg" class="muted" role="status" aria-live="polite"></p>
-<p class="muted">Las alertas se envían desde un proceso aparte, aunque esta página esté cerrada. No incluyen el nombre del bebé.</p></article>
+<p class="muted">Las alertas se envían desde un proceso aparte, aunque esta página esté cerrada. No incluyen el nombre del bebé.</p></article><article class="card" id="thr-card"><div class="cardhead"><h2>Umbrales de temperatura</h2></div>
+<form id="thr-form" class="thr-form" novalidate><label>Mínimo (°C)<input id="thr-min" name="temp_min" type="number" step="0.5" min="-20" max="60" required></label><label>Máximo (°C)<input id="thr-max" name="temp_max" type="number" step="0.5" min="-20" max="60" required></label><button id="thr-save" type="submit">Guardar umbrales</button></form>
+<p id="thr-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">Se avisa por Telegram solo cuando la temperatura supera el máximo o baja del mínimo, y una sola vez por cambio de estado. Un valor igual al límite no alerta. La humedad se muestra, pero no genera alertas. Por defecto: 19 a 22 °C.</p></article>
 </div></section>
 <section id="hardware" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Dispositivos</h1></div><button id="add-device">Registrar dispositivo</button></div><div class="card"><h2>Inventario familiar</h2><div id="inventory"></div></div></section>
 <section id="people" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Personas</h1></div><button id="add-member">Crear cuenta</button></div><div class="card"><h2>Acceso a la familia</h2><div id="members"></div></div></section>

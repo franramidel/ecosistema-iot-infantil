@@ -58,7 +58,7 @@ class Auditoria(Base):
         self.assertEqual(self.send_audit(nuevo)[1]["child_id"], b)
         tipos_a = sorted(r["event_type"] for r in self.audit_rows(child_id=a))
         tipos_b = sorted(r["event_type"] for r in self.audit_rows(child_id=b))
-        self.assertEqual(tipos_a, ["ALERTA_MANUAL", "ASIGNACION", "DESASIGNACION", "LECTURA"])
+        self.assertEqual(tipos_a, ["ALERTA_MANUAL", "ALERTA_TEMPERATURA_ALTA", "ASIGNACION", "DESASIGNACION", "LECTURA"])
         self.assertEqual(tipos_b, ["ALERTA_MANUAL", "ASIGNACION"])
 
     def test_cambios_de_estado_dejan_rastro(self):
