@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -13,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from cuna import exportar, panel
+from cuna.auditoria import consulta, evento
 from cuna.cloud import Cloud
 from cuna.common import Problem, device_id, field, member_input, reading
 from cuna.local import Local
@@ -66,6 +69,7 @@ class Application(ThreadingHTTPServer):
     def __init__(self, address, store, secure=False):
         super().__init__(address, Handler)
         self.store, self.secure = store, secure
+        self.bot_username = None  # solo para mostrar el enlace t.me; el servidor nunca conoce el token
         self.sessions = {}
         self.condition = threading.Condition()
         self.revision = 0
@@ -124,6 +128,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_file(self, path, mime, filename):
+        """Envía un archivo por bloques. Los encabezados salen solo cuando el archivo ya está completo.
+        Repite los encabezados de seguridad de response() para no modificar ese método, que es de otro módulo."""
+        with open(path,"rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length",str(size))
+            self.send_header("Cache-Control","no-store")
+            self.send_header("X-Content-Type-Options","nosniff")
+            self.send_header("Referrer-Policy","same-origin")
+            self.send_header("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+            self.send_header("Content-Disposition",f'attachment; filename="{filename}"')
+            self.end_headers()
+            while block := handle.read(65536):
+                self.wfile.write(block)
+
     def sid(self):
         cookie = SimpleCookie()
         cookie.load(self.headers.get("Cookie",""))
@@ -165,6 +186,20 @@ class Handler(BaseHTTPRequestHandler):
             self.response(self.server.store.state(session,child))
         elif path == "/api/sync":
             self.response(self.server.store.sync_config(session))
+        elif path == "/api/thresholds":
+            if not child:
+                raise Problem("Indica el bebé con ?child=.")
+            self.response(self.umbrales().umbrales(session,child))
+        elif path == "/api/audit":
+            self.response(self.server.store.audit_page(session,*consulta(query)))
+        elif path == "/api/history":
+            self.response(self.server.store.history(session,*panel.consulta_historial(query)))
+        elif path in ("/api/sleep","/api/settings","/api/modules"):
+            if not child:
+                raise Problem("Indica el bebé con ?child=.")
+            child = panel.uuid_texto(child)
+            store = self.server.store
+            self.response({"/api/sleep":store.sleep_state,"/api/settings":store.settings,"/api/modules":store.modules}[path](session,child))
         elif path == "/api/stream":
             if self.server.store.sync_mode != "sse":
                 raise Problem("Esta sesión usa Supabase Realtime.",404)
@@ -184,6 +219,15 @@ class Handler(BaseHTTPRequestHandler):
                 after = rows[-1]["id"]
             self.response(out.getvalue().encode("utf-8-sig"),"text/csv",headers={
                 "Content-Disposition":'attachment; filename="historial.csv"'})
+        elif path == "/api/telegram":
+            self.response({**self.telegram().telegram_estado(session),"bot":self.server.bot_username})
+        elif path == "/api/export/xlsx":
+            filtros = {k:v for k,v in consulta(query)[0].items() if k in ("child","device","desde","hasta")}
+            export = exportar.generar(self.server.store,session,filtros)
+            try:
+                self.send_file(export.ruta,exportar.MIME,export.nombre)
+            finally:
+                export.eliminar()
         else:
             raise Problem("Ruta desconocida.",404)
 
@@ -214,6 +258,25 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {latest}\n\n".encode() if latest != version else b": pulso\n\n")
             self.wfile.flush()
             version = latest
+
+    def umbrales(self):
+        store = self.server.store
+        if not hasattr(store,"umbrales"):
+            raise Problem("Este almacén de datos no admite umbrales de temperatura.",501)
+        return store
+
+    def telegram(self):
+        store = self.server.store
+        if not hasattr(store,"telegram_estado"):
+            raise Problem("Este almacén de datos no admite Telegram.",501)
+        return store
+
+    def device_key(self):
+        """Clave del dispositivo para /api/audit/events. /api/events conserva su propia comprobación original."""
+        authorization = self.headers.get("Authorization","")
+        if not authorization.startswith("Bearer ") or not authorization[7:]:
+            raise Problem("Se requiere la clave del dispositivo.",403)
+        return authorization[7:]
 
     def post(self,path):
         if self.headers.get_content_type() != "application/json":
@@ -251,6 +314,36 @@ class Handler(BaseHTTPRequestHandler):
             if not authorization.startswith("Bearer ") or not authorization[7:]:
                 raise Problem("Se requiere la clave del dispositivo.",403)
             result = store.ingest(device_id(data),authorization[7:],reading(data))
+        elif path == "/api/thresholds":
+            session = self.server.session(self.sid())
+            result = self.umbrales().umbrales_guardar(session,field(data,"child_id"),data.get("temp_min"),data.get("temp_max"))
+        elif path == "/api/device/thresholds":
+            result = self.umbrales().umbrales_dispositivo(device_id(data),self.device_key())
+        elif path == "/api/audit/events":
+            result = store.record(device_id(data),self.device_key(),evento(data))
+        elif path in ("/api/telegram/link","/api/telegram/unlink","/api/telegram/test"):
+            session = self.server.session(self.sid())
+            store = self.telegram()
+            if path.endswith("/link"):
+                result = store.telegram_codigo(session)
+                bot = self.server.bot_username
+                result = {**result,"bot":bot,"enlace":f"https://t.me/{bot}?start={result['codigo']}" if bot else None}
+            elif path.endswith("/unlink"):
+                result = store.telegram_desvincular(session)
+            else:
+                result = store.telegram_probar(session)
+        elif path == "/api/feeding":
+            session = self.server.session(self.sid())
+            result = store.feeding_log(session,*panel.validar_toma(data))
+        elif path in ("/api/sleep/start","/api/sleep/snapshot","/api/sleep/disarm"):
+            session = self.server.session(self.sid())
+            result = store.sleep_action(session,panel.uuid_texto(data.get("child_id")),path.rsplit("/",1)[1])
+        elif path == "/api/settings":
+            session = self.server.session(self.sid())
+            result = store.settings_save(session,*panel.validar_ajustes(data))
+        elif path == "/api/modules":
+            session = self.server.session(self.sid())
+            result = store.modules_save(session,*panel.validar_modulo(data))
         elif path.startswith("/api/change/"):
             session = self.server.session(self.sid())
             action = path.removeprefix("/api/change/")
@@ -293,6 +386,8 @@ def main():
                 parser.exit(2,str(exc)+"\n")
             store.bootstrap(email,pw)
     server = Application((args.host,args.port),store,cfg.get("CUNA_SECURE_COOKIE")=="1")
+    username = (cfg.get("TELEGRAM_BOT_USERNAME") or "").lstrip("@")
+    server.bot_username = username if re.fullmatch(r"[A-Za-z0-9_]{5,32}",username) else None
     print(f"Cuna inteligente · {'Supabase' if args.supabase else 'Demo local'} · http://{args.host}:{server.server_port}",flush=True)
     try:
         server.serve_forever()

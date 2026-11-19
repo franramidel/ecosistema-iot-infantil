@@ -4,7 +4,9 @@ import hmac
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import timedelta
 
+from . import alertas, auditoria, migraciones, notificaciones, panel, retencion
 from .common import Problem, device_secret, fingerprint, instant, uid
 
 SCHEMA = """
@@ -14,8 +16,6 @@ create table if not exists members(
  password_hash text not null, role text not null check(role in ('admin','caregiver')),
  can_operate integer not null);
 create table if not exists children(id text primary key, family_id text not null references families, name text not null);
-create table if not exists devices(
- id text primary key, family_id text not null references families, name text not null, secret_hash text not null);
 create table if not exists assignments(
  id text primary key, device_id text not null references devices, child_id text not null references children,
  started_at text not null, ended_at text, enabled integer not null default 0,
@@ -43,8 +43,7 @@ class Local:
     def __init__(self, path):
         self.path = str(path)
         self.dummy = password_hash(uid())
-        with self.connection() as db:
-            db.executescript(SCHEMA)
+        migraciones.migrar(self.path, SCHEMA)
 
     def sync_config(self, session):
         return {"mode": self.sync_mode}
@@ -151,7 +150,7 @@ class Local:
                     db.execute("update children set name=? where id=?", (p["name"], p["child_id"]))
                 elif action == "device":
                     secret = device_secret()
-                    db.execute("insert into devices values (?,?,?,?)", (p["device_id"], family, p["name"], fingerprint(secret)))
+                    db.execute("insert into devices(id,family_id,name,secret_hash) values (?,?,?,?)", (p["device_id"], family, p["name"], fingerprint(secret)))
                     result["secret"] = secret
                 else:
                     self.update_device(db, family, action, p)
@@ -200,6 +199,229 @@ class Local:
                 raise Problem("El dispositivo estaba sin asignar en esa fecha.", 409)
             child = assignment["child_id"]
             db.execute("insert into events values (?,?,?,?,?,?,?)", (event_id, device, child, at, metric, value, unit))
+            if metric == alertas.METRICA_TEMPERATURA and unit == alertas.UNIDAD_TEMPERATURA:
+                # RF-NOT-02: el servidor decide la alerta en la misma transacción que guarda la lectura.
+                alertas.evaluar(db, row["family_id"], device, child, at, event_id, value)
             db.execute("update families set version=version+1 where id=?", (row["family_id"],))
             return {"child_id": child}
 
+    def authenticate_device(self, db, device, secret):
+        row = db.execute("select family_id,secret_hash from devices where id=?", (device,)).fetchone()
+        if not row or not hmac.compare_digest(row["secret_hash"], fingerprint(secret)):
+            raise Problem("Credencial de dispositivo inválida.", 403)
+        return row["family_id"]
+
+    def record(self, device, secret, observation):
+        """Evento de auditoría enviado por un dispositivo. El bebé se resuelve en el servidor."""
+        with self.connection(True) as db:
+            family = self.authenticate_device(db, device, secret)
+            result = auditoria.registrar(db, family, device, observation)
+            db.execute("update families set version=version+1 where id=?", (family,))
+            return result
+
+    def consulta_de_auditoria(self, db, session, filtros):
+        """Solo administradores. Comprueba que bebé y dispositivo sean de su familia y devuelve (familia, filtros)."""
+        me = self.actor(db, session)
+        if me["role"] != "admin":
+            raise Problem("Se requiere el rol de administrador.", 403)
+        return me["family_id"], auditoria.resolver_filtros(db, me["family_id"], filtros)
+
+    def audit_page(self, session, filtros, after, limit):
+        with self.connection() as db:
+            family, filtros = self.consulta_de_auditoria(db, session, filtros)
+            return auditoria.pagina(db, family, filtros, after, limit)
+
+    def audit_corte(self, session, filtros):
+        """Último registro de auditoría de la familia. Fija el alcance de una exportación."""
+        with self.connection() as db:
+            family, _ = self.consulta_de_auditoria(db, session, filtros)
+            return auditoria.corte(db, family)
+
+    # Telegram (SCRUM-24). Las acciones del usuario exigen sesión. Las del procesador no reciben sesión:
+    # solo las invoca el proceso del servidor o telegram_worker.py, nunca una ruta HTTP.
+
+    # Umbrales de temperatura (RF-CUN-01). Leer: cualquier miembro de la familia. Cambiar: solo administradores.
+
+    def umbrales(self, session, child):
+        with self.connection() as db:
+            family = self.actor(db, session)["family_id"]
+            self.child(db, family, child)
+            minimo, maximo, defecto = alertas.leer_umbrales(db, child)
+            return {"child_id": child, "temp_min": minimo, "temp_max": maximo, "default": defecto}
+
+    def umbrales_guardar(self, session, child, minimo, maximo, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            if me["role"] != "admin":
+                raise Problem("Se requiere el rol de administrador.", 403)
+            self.child(db, me["family_id"], child)
+            resultado = alertas.guardar_umbrales(db, me["family_id"], child, minimo, maximo, me["id"], ahora or instant())
+            db.execute("update families set version=version+1 where id=?", (me["family_id"],))
+            return resultado
+
+    def umbrales_dispositivo(self, device, secret, ahora=None):
+        """Umbrales del bebé al que está asignado el dispositivo. El firmware los usa solo para enviar al instante
+        un cruce de umbral; la decisión de alertar sigue siendo del servidor. No revela quién es el bebé."""
+        with self.connection() as db:
+            self.authenticate_device(db, device, secret)
+            child = auditoria.bebe_activo(db, device, ahora or instant())
+            if not child:
+                raise Problem("El dispositivo no está asignado a ningún bebé.", 409)
+            minimo, maximo, _ = alertas.leer_umbrales(db, child)
+            return {"temp_min": minimo, "temp_max": maximo}
+
+    # Sprint 2 (SCRUM-54, 35, 51, 57, 56). Estado lógico: nada de esto acciona hardware. Ver cuna/panel.py.
+    # Leer: cualquier miembro de la familia. Operar (tomas, sesión de sueño, módulos): can_operate. Ajustes: administradores.
+
+    def lector(self, db, session, child):
+        me = self.actor(db, session)
+        self.child(db, me["family_id"], child)
+        return me
+
+    def operador(self, db, session, child):
+        me = self.actor(db, session)
+        if not me["can_operate"]:
+            raise Problem("No tienes permiso para operar dispositivos.", 403)
+        self.child(db, me["family_id"], child)
+        return me
+
+    def avisar(self, db, family):
+        db.execute("update families set version=version+1 where id=?", (family,))
+
+    def history(self, session, child, filtros, after, limite):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.historial(db, child, filtros, after, limite)
+
+    def sleep_state(self, session, child, ahora=None):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.estado_sueno(db, child, ahora or instant())
+
+    def sleep_action(self, session, child, accion, ahora=None):
+        ahora = ahora or instant()
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            if accion == "start":
+                panel.iniciar_sueno(db, me["family_id"], child, me["id"], ahora)
+            elif accion == "snapshot":
+                panel.snapshot_masa(db, child, me["id"], ahora)
+            elif accion == "disarm":
+                panel.desarmar_sueno(db, child, me["id"], ahora)
+            else:
+                raise Problem("Operación desconocida.", 404)
+            self.avisar(db, me["family_id"])
+            return panel.estado_sueno(db, child, ahora)
+
+    def feeding_log(self, session, child, event_id, duracion, volumen, unidad, ahora=None):
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            resultado = panel.registrar_toma(db, me["family_id"], child, event_id, duracion, volumen, unidad, ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def settings(self, session, child):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.leer_ajustes(db, child)
+
+    def settings_save(self, session, child, velocidad, audio, volumen, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            if me["role"] != "admin":
+                raise Problem("Se requiere el rol de administrador.", 403)
+            self.child(db, me["family_id"], child)
+            resultado = panel.guardar_ajustes(db, me["family_id"], child, velocidad, audio, volumen, me["id"], ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def modules(self, session, child):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.leer_modulos(db, child)
+
+    def modules_save(self, session, child, modulo, encendido, modo, ahora=None):
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            resultado = panel.guardar_modulo(db, me["family_id"], child, modulo, encendido, modo, me["id"], ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def telegram_estado(self, session, ahora=None):
+        with self.connection() as db:
+            me = self.actor(db, session)
+            return notificaciones.estado(db, me["id"], ahora or instant())
+
+    def telegram_codigo(self, session, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            ahora = ahora or instant()
+            codigo, expira = notificaciones.generar_codigo(db, me["id"], me["family_id"], ahora)
+            return {"codigo": codigo, "expira": expira}
+
+    def telegram_desvincular(self, session, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            notificaciones.desvincular(db, me["id"], ahora or instant())
+            db.execute("update families set version=version+1 where id=?", (me["family_id"],))
+            return {}
+
+    def telegram_probar(self, session, ahora=None):
+        """Encola una notificación de prueba para el propio usuario. Una cada 15 segundos como máximo."""
+        ahora = ahora or instant()
+        with self.connection() as db:
+            me = self.actor(db, session)
+            if not db.execute("select 1 from telegram_links where member_id=? and chat_id is not null", (me["id"],)).fetchone():
+                raise Problem("Vincula tu cuenta de Telegram antes de enviar una prueba.", 409)
+            reciente = db.execute("select 1 from notification_queue where member_id=? and idempotency_key like 'prueba:%' and created_at>?",
+                                  (me["id"], notificaciones.sumar(ahora, -timedelta(seconds=15)))).fetchone()
+        if reciente:
+            raise Problem("Espera unos segundos antes de enviar otra prueba.", 429)
+        resultado = self.solicitar_notificacion(me["id"], "prueba:" + uid(), titulo="Notificación de prueba",
+                                                estado="Informativo", ocurrido=ahora, ahora=ahora)
+        return resultado
+
+    def solicitar_notificacion(self, usuario_id, clave_idempotencia, *, titulo, dispositivo=None, ocurrido=None,
+                               estado="Advertencia", evento_id=None, ahora=None):
+        """Contrato para SCRUM-25. Guarda la solicitud y devuelve sin esperar a Telegram.
+
+        Es una función interna: la llama código del servidor que ya validó el evento, no el navegador ni
+        un dispositivo. Devuelve {"id", "estado", "duplicado", "vinculado"}. Ver docs/SCRUM-24-telegram.md.
+        """
+        mensaje = notificaciones.formatear_alerta(titulo, dispositivo, ocurrido, estado)
+        with self.connection(True) as db:
+            return notificaciones.encolar(db, usuario_id, clave_idempotencia, mensaje, evento_id, ahora or instant())
+
+    def telegram_vincular(self, texto, chat_id, user_id, siguiente_offset=None, ahora=None):
+        """Lo llama el procesador al recibir un mensaje del bot. Guarda el offset en la misma transacción."""
+        with self.connection(True) as db:
+            resultado = notificaciones.vincular(db, texto, chat_id, user_id, ahora or instant())
+            if siguiente_offset is not None:
+                notificaciones.guardar_offset(db, siguiente_offset)
+            if resultado[0] == "vinculado":
+                db.execute("update families set version=version+1 where id=(select family_id from members where id=?)", (resultado[1],))
+            return resultado
+
+    def telegram_offset(self, nuevo=None):
+        with self.connection(nuevo is not None) as db:
+            if nuevo is None:
+                return notificaciones.leer_offset(db)
+            notificaciones.guardar_offset(db, nuevo)
+
+    def telegram_procesador(self, dueno, ahora=None, liberar=False):
+        with self.connection(True) as db:
+            if liberar:
+                return notificaciones.liberar_procesador(db, dueno, ahora or instant())
+            return notificaciones.adquirir_procesador(db, dueno, ahora or instant())
+
+    def cola_reclamar(self, token, limite=10, ahora=None):
+        with self.connection(True) as db:
+            return notificaciones.reclamar(db, ahora or instant(), limite, token)
+
+    def cola_resultado(self, trabajo, tipo=None, error=None, reintentar_en=None, bloqueado=False, ahora=None):
+        with self.connection(True) as db:
+            ahora = ahora or instant()
+            final = notificaciones.resultado(db, trabajo, ahora, tipo, error, reintentar_en)
+            if final and bloqueado:
+                notificaciones.marcar_bloqueado(db, trabajo["member_id"], ahora)
+            return final

@@ -98,3 +98,5 @@ Las pruebas arrancan un servidor HTTP local y una base temporal por caso. Cubren
 | | Eventos inmutables | Triggers `keep_event` y `keep_history` (SQLite) y `immutable_event` (Supabase) |
 
 Pruebas automáticas: `python -m unittest discover -s tests -v` (incluye sincronización local, configuración Realtime con cuentas de una misma familia y aislamiento entre familias; la entrega real de Supabase requiere verificarla con un proyecto configurado).
+
+**Alertas por Telegram (SCRUM-24).** Se ejecutan con un proceso aparte del servidor: `python telegram_worker.py`. Necesita `TELEGRAM_BOT_TOKEN` en el entorno o en `.env`, que no se sube a Git. Con Supabase se inicia con `python telegram_worker.py --supabase`. Guía en `docs/integracion-windows.md`, sección 8.
