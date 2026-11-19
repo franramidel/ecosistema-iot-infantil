@@ -100,3 +100,7 @@ Detalle en `SCRUM-24-telegram.md`. Esta entrega no detecta eventos críticos ni 
 
 ## 8. Alertas de temperatura (Persona 3)
 Añade `008_alertas_temperatura.sql` (no aprobada para desplegar), `cuna/alertas.py`, endpoints `/api/thresholds` y `/api/device/thresholds`, la tarjeta "Umbrales de temperatura" en la web y `firmware/cuna-pico`. Toca `local.py` (`ingest` llama a `alertas.evaluar`), `migraciones.py`, `cloud.py` y `app.py`. Depende de SCRUM-24 (cola de Telegram) y SCRUM-20 (auditoría). Detalle en `SCRUM-25-alertas-temperatura.md`.
+
+
+## 9. Sprint 2 (SCRUM-55, 54, 35, 51, 57, 22, 56)
+Añade `cuna/panel.py`, `supabase/009_panel_sprint2.sql` (no aprobada para desplegar; no cambia `VERSION` de migraciones), los endpoints `/api/history`, `/api/sleep*`, `/api/feeding`, `/api/settings` y `/api/modules`, las pestañas Control y Auditoría, la gráfica con rangos y la cola durable de `firmware/cuna-pico/main.py`. Toca `local.py`, `cloud.py`, `migraciones.py` (ejecuta `panel.SCHEMA`), `auditoria.py` (reserva el tipo `TOMA`), `app.py`, `web/*` y el shim de `tests/test_firmware.py` (solo aísla `COLA_ARCHIVO`). Detalle y límites en `SPRINT-2.md`.

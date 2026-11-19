@@ -18,7 +18,11 @@ python -m unittest discover -s tests -v
 | `test_exportar.py` | 31 | SCRUM-23: filtros, seguridad, contenido del Excel, volumen y SQLite frente a Supabase |
 | `test_telegram.py` | 52 | SCRUM-24: configuración, vinculación, envío, reintentos, cola, concurrencia, integración y endpoints, con un Telegram simulado |
 | `test_telegram_nube.py` | 56 | SCRUM-24 con SQLite y Supabase: 22 casos de contrato ejecutados contra los dos almacenes, 12 propios de Supabase. Los de Supabase se omiten sin `PGTEST_URL` |
-| Total | 197 | Con `PGTEST_URL` pasan 197. Sin él pasan 163 y se omiten 34 |
+| `test_sprint2.py` | 44 | Sprint 2 con SQLite: consola de auditoría, historial, sueño y snapshot, tomas, ajustes, módulos, migración y archivos web con CSP |
+| `test_sprint2_nube.py` | 22 | Sprint 2 con SQLite y Supabase: 11 casos de contrato por almacén. Los de Supabase se omiten sin `PGTEST_URL` |
+| `test_firmware.py` | 17 | Firmware con sustitutos de la placa |
+| `test_firmware_cola.py` | 14 | SCRUM-22: cola durable, reenvío con `event_id` y `captured_at` originales, reinicio, tope de 100, archivo dañado |
+| Total | 345 | Con `PGTEST_URL` pasan 345. Sin él se omiten 53 de Supabase. Las pruebas de UI (`tests/ui/`) van aparte, con jsdom |
 
 Se agregaron 47 pruebas a las 42 de la entrega anterior en SCRUM-20 a SCRUM-23, y 108 más en SCRUM-24. No se borró ninguna. Dos pruebas anteriores se adaptaron por el cambio de esquema y por la regla de que el código no borra datos: la de claves foráneas de la auditoría, que ahora tiene control positivo y una causa de fallo por caso, y la de migración, que usa el esquema anterior guardado en `tests/fixtures/esquema_scrum21.sql`.
 

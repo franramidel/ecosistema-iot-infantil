@@ -9,6 +9,7 @@ import contextlib
 import importlib.util
 import json
 import sys
+import tempfile
 import types
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -128,6 +129,7 @@ def cargar_firmware(sensor, reloj):
         spec.loader.exec_module(modulo)
     modulo.time = reloj
     modulo.ENVIAR = True
+    modulo.COLA_ARCHIVO = str(Path(tempfile.mkdtemp(prefix="cola-pico-")) / "cola.jsonl")  # nunca el cola.jsonl del directorio actual
     modulo.falsos = falsos
     return modulo
 

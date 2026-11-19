@@ -26,7 +26,8 @@ async function pantalla(email, password) {
   w.EventSource = class { constructor() {} close() {} addEventListener() {} };
   w.URL.createObjectURL = b => { descargas.push({blob: b}); return "blob:prueba"; };
   w.URL.revokeObjectURL = () => {};
-  w.HTMLCanvasElement.prototype.getContext = () => ({scale() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, arc() {}, fill() {}});
+  const lienzo = new Proxy({}, {get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { t[k] = v; return true; }});  // el gráfico usa más métodos del canvas
+  w.HTMLCanvasElement.prototype.getContext = () => lienzo;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLAnchorElement.prototype.click = function () { if (this.download) descargas.at(-1).nombre = this.download; };
   w.eval(js);

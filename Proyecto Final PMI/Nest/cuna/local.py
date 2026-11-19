@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import timedelta
 
-from . import alertas, auditoria, migraciones, notificaciones, retencion
+from . import alertas, auditoria, migraciones, notificaciones, panel, retencion
 from .common import Problem, device_secret, fingerprint, instant, uid
 
 SCHEMA = """
@@ -269,6 +269,83 @@ class Local:
                 raise Problem("El dispositivo no está asignado a ningún bebé.", 409)
             minimo, maximo, _ = alertas.leer_umbrales(db, child)
             return {"temp_min": minimo, "temp_max": maximo}
+
+    # Sprint 2 (SCRUM-54, 35, 51, 57, 56). Estado lógico: nada de esto acciona hardware. Ver cuna/panel.py.
+    # Leer: cualquier miembro de la familia. Operar (tomas, sesión de sueño, módulos): can_operate. Ajustes: administradores.
+
+    def lector(self, db, session, child):
+        me = self.actor(db, session)
+        self.child(db, me["family_id"], child)
+        return me
+
+    def operador(self, db, session, child):
+        me = self.actor(db, session)
+        if not me["can_operate"]:
+            raise Problem("No tienes permiso para operar dispositivos.", 403)
+        self.child(db, me["family_id"], child)
+        return me
+
+    def avisar(self, db, family):
+        db.execute("update families set version=version+1 where id=?", (family,))
+
+    def history(self, session, child, filtros, after, limite):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.historial(db, child, filtros, after, limite)
+
+    def sleep_state(self, session, child, ahora=None):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.estado_sueno(db, child, ahora or instant())
+
+    def sleep_action(self, session, child, accion, ahora=None):
+        ahora = ahora or instant()
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            if accion == "start":
+                panel.iniciar_sueno(db, me["family_id"], child, me["id"], ahora)
+            elif accion == "snapshot":
+                panel.snapshot_masa(db, child, me["id"], ahora)
+            elif accion == "disarm":
+                panel.desarmar_sueno(db, child, me["id"], ahora)
+            else:
+                raise Problem("Operación desconocida.", 404)
+            self.avisar(db, me["family_id"])
+            return panel.estado_sueno(db, child, ahora)
+
+    def feeding_log(self, session, child, event_id, duracion, volumen, unidad, ahora=None):
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            resultado = panel.registrar_toma(db, me["family_id"], child, event_id, duracion, volumen, unidad, ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def settings(self, session, child):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.leer_ajustes(db, child)
+
+    def settings_save(self, session, child, velocidad, audio, volumen, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            if me["role"] != "admin":
+                raise Problem("Se requiere el rol de administrador.", 403)
+            self.child(db, me["family_id"], child)
+            resultado = panel.guardar_ajustes(db, me["family_id"], child, velocidad, audio, volumen, me["id"], ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def modules(self, session, child):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return panel.leer_modulos(db, child)
+
+    def modules_save(self, session, child, modulo, encendido, modo, ahora=None):
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            resultado = panel.guardar_modulo(db, me["family_id"], child, modulo, encendido, modo, me["id"], ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
 
     def telegram_estado(self, session, ahora=None):
         with self.connection() as db:

@@ -10,7 +10,9 @@ Qué se envía y cuándo (cada medida va como evento aparte: "Temperatura" en °
   * cuando la temperatura cambia 0.5 °C o más desde el último envío,
   * al instante cuando cruza un umbral (el dispositivo consulta los umbrales al servidor cada minuto),
   * cada 30 s aunque no cambie nada, para que el panel sepa que el dispositivo sigue vivo.
-Si no hay Wi-Fi o el servidor no responde, los eventos esperan en memoria (hasta 20) y se reenvían en orden.
+Si no hay Wi-Fi o el servidor no responde, los eventos esperan en una cola de hasta 100 y se reenvían en orden con su
+event_id y su captured_at ORIGINALES (RF-DAT-03). Lo que sigue pendiente también se guarda en el archivo cola.jsonl de la
+placa, así que sobrevive a un reinicio. Ver LEEME.md, sección "Búfer sin conexión".
 """
 import json
 import os
@@ -28,7 +30,8 @@ INTERVALO_LATIDO = 30        # s entre envíos aunque nada cambie
 CAMBIO_MINIMO = 0.5          # °C que obligan a enviar
 INTERVALO_UMBRALES = 60      # s entre consultas de umbrales
 INTERVALO_HORA = 3600        # s entre sincronizaciones de la hora
-MAX_PENDIENTES = 20
+MAX_PENDIENTES = 100         # eventos en espera. Cada uno ocupa unos 300 bytes de RAM; con 100 sobra memoria en la Pico W
+COLA_ARCHIVO = "cola.jsonl"  # copia en flash de los eventos que siguen sin enviarse (una línea JSON por evento)
 TEMP_MIN = 19.0              # valores por defecto del SRS, hasta conocer los del servidor
 TEMP_MAX = 22.0
 
@@ -63,6 +66,106 @@ def eventos_de_lectura(temp, hum, id_dispositivo):
         {"event_id": uuid4(), "device_id": id_dispositivo, "captured_at": at,
          "metric": "Humedad", "value": round(hum, 1), "unit": "%"},
     ]
+
+
+def _existe(ruta):
+    try:
+        os.stat(ruta)
+        return True
+    except OSError:
+        return False
+
+
+def _borrar(ruta):
+    if _existe(ruta):
+        os.remove(ruta)
+
+
+def cola_leer(ruta, maximo):
+    """Lee los eventos guardados. Devuelve (eventos, lineas). Ignora líneas cortadas por un corte de energía,
+    líneas que no son un evento completo y repetidos por event_id. Si falta el archivo pero quedó el temporal de una
+    reescritura completa, recupera el temporal."""
+    if not _existe(ruta) and _existe(ruta + ".tmp"):
+        os.rename(ruta + ".tmp", ruta)
+    eventos, vistos, lineas = [], set(), 0
+    try:
+        with open(ruta) as f:
+            for linea in f:
+                lineas += 1
+                try:
+                    ev = json.loads(linea)
+                    ev_id = ev["event_id"]
+                    for clave in ("device_id", "captured_at", "metric", "value", "unit"):
+                        ev[clave]
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if ev_id in vistos:
+                    continue
+                vistos.add(ev_id)
+                eventos.append(ev)
+    except OSError:
+        pass
+    return eventos[-maximo:], lineas
+
+
+class Cola:
+    """Cola de eventos pendientes con copia en un archivo, para no perderlos si la placa se reinicia sin Wi-Fi.
+
+    El evento NUNCA se modifica: conserva el event_id y el captured_at con que se creó, también tras un reinicio.
+    Si algún reenvío se repite (por ejemplo, se reinicia justo después de enviar), el servidor lo reconoce por el
+    event_id y no duplica nada. Para no desgastar la flash solo se escribe cuando algo queda sin enviar:
+    se agregan líneas al final y el archivo se borra cuando la cola se vacía. Los eventos de un ciclo que se envían
+    en ese mismo ciclo no tocan la flash; si hay un corte de energía antes de enviarlos, se pierden (unos 2 s de lecturas).
+    """
+
+    def __init__(self, ruta, maximo):
+        self.ruta, self.maximo = ruta, maximo
+        self.eventos, self.lineas = cola_leer(ruta, maximo)
+        self.guardados = len(self.eventos)  # los primeros `guardados` eventos de la cola ya tienen su línea en el archivo
+        self.reescribir = self.lineas != len(self.eventos)  # había líneas inservibles o repetidas: compactar
+
+    def __len__(self):
+        return len(self.eventos)
+
+    def primero(self):
+        return self.eventos[0]
+
+    def quitar(self):
+        self.eventos.pop(0)
+        self.guardados = max(0, self.guardados - 1)
+
+    def agregar(self, nuevos):
+        self.eventos.extend(nuevos)
+        sobran = len(self.eventos) - self.maximo
+        if sobran > 0:
+            del self.eventos[:sobran]  # si el servidor sigue caído, se pierden primero los más viejos
+            self.guardados = max(0, self.guardados - sobran)
+            self.reescribir = True
+
+    def guardar(self):
+        """Deja el archivo al día. Llamar al final de cada ciclo, después de intentar enviar."""
+        if not self.eventos:
+            if self.lineas or _existe(self.ruta):
+                _borrar(self.ruta)
+            _borrar(self.ruta + ".tmp")
+            self.lineas = self.guardados = 0
+            self.reescribir = False
+            return
+        nuevos = self.eventos[self.guardados:]
+        if self.reescribir or self.lineas + len(nuevos) > 2 * self.maximo:
+            # Se escribe completo en un temporal y luego se cambia por el archivo: un corte a mitad no pierde la cola.
+            with open(self.ruta + ".tmp", "w") as f:
+                for ev in self.eventos:
+                    f.write(json.dumps(ev) + "\n")
+            _borrar(self.ruta)
+            os.rename(self.ruta + ".tmp", self.ruta)
+            self.lineas, self.guardados, self.reescribir = len(self.eventos), len(self.eventos), False
+        elif nuevos:
+            with open(self.ruta, "a") as f:
+                for ev in nuevos:
+                    f.write(json.dumps(ev) + "\n")
+            self.lineas += len(nuevos)
+            self.guardados = len(self.eventos)
 
 
 class Cliente:
@@ -172,7 +275,7 @@ def ejecutar(cfg=None, requests=None, ciclos=None):
             print("No se pudo sincronizar la hora:", e)
             return False
 
-    pendientes = []
+    cola = Cola(COLA_ARCHIVO, MAX_PENDIENTES) if ENVIAR else None
     minimo, maximo = TEMP_MIN, TEMP_MAX
     hora_ok = False
     ultima_clase = None
@@ -181,6 +284,8 @@ def ejecutar(cfg=None, requests=None, ciclos=None):
     n = 0
 
     if ENVIAR:
+        if len(cola):
+            print("Eventos pendientes de antes del reinicio:", len(cola))
         conectar()
         hora_ok = sincronizar_hora()
         t_hora = time.ticks_ms()
@@ -217,17 +322,20 @@ def ejecutar(cfg=None, requests=None, ciclos=None):
             cambio = ultima_temp is None or abs(temp - ultima_temp) >= CAMBIO_MINIMO
             latido = t_envio is None or time.ticks_diff(ms, t_envio) >= INTERVALO_LATIDO * 1000
             if hora_ok and (cruce or cambio or latido):
-                pendientes.extend(eventos_de_lectura(temp, hum, id_dispositivo))
-                del pendientes[:-MAX_PENDIENTES]  # si el servidor sigue caído, se pierden primero los más viejos
+                cola.agregar(eventos_de_lectura(temp, hum, id_dispositivo))
                 ultima_clase, ultima_temp, t_envio = clase, temp, ms
 
-            while pendientes and wlan.isconnected():
-                resultado = cliente.enviar(pendientes[0])
+            while len(cola) and wlan.isconnected():
+                resultado = cliente.enviar(cola.primero())
                 if resultado == "reintentar":
                     break
                 if resultado == "ok":
-                    print("Enviado", pendientes[0]["metric"])
-                pendientes.pop(0)
+                    print("Enviado", cola.primero()["metric"])
+                cola.quitar()
+            try:
+                cola.guardar()
+            except OSError as e:  # flash llena o dañada: la cola sigue en memoria
+                print("No se pudo guardar la cola:", e)
 
         time.sleep(INTERVALO_LECTURA)
 

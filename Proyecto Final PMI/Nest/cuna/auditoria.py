@@ -18,7 +18,7 @@ from .common import Problem, device_id, field, instant, uid
 SEVERIDADES = ("info", "warning", "critical")
 # Los escribe el sistema. Un dispositivo no puede fabricarlos por la API.
 RESERVADOS = {"LECTURA", "ASIGNACION", "DESASIGNACION", "ACTIVACION", "DESACTIVACION",
-              "NOTIFICACION_ENVIADA", "NOTIFICACION_FALLIDA"}
+              "NOTIFICACION_ENVIADA", "NOTIFICACION_FALLIDA", "TOMA"}
 LIMITE_MAXIMO = 500
 
 UUID_SQL = ("lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)"

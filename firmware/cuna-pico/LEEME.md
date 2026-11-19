@@ -11,7 +11,13 @@ Lee un DHT22 (GP15), enciende un LED (GP14) y envía Temperatura y Humedad al se
 
 ## Comportamiento
 - Lee cada 2 s. Envía si la temperatura cambia ≥ 0,5 °C, de inmediato al cruzar un umbral y cada 30 s como latido.
-- Hasta 20 eventos esperan en memoria y se reintentan en orden. Descarta con 409 (sin asignar) o 403 (clave mala).
+- Búfer sin conexión: los eventos pendientes se guardan en `cola.jsonl` en la flash de la Pico, hasta 100, y sobreviven a un reinicio. Se reenvían en orden con su `event_id` y su `captured_at` originales; el servidor ignora los repetidos. Si se llena, se pierde primero el más viejo. El archivo se borra cuando la cola queda vacía. Descarta con 409 (sin asignar) o 403 (clave mala).
 - Hora por NTP, resincronizada cada hora. Los umbrales se refrescan cada 60 s.
 
-Pruebas sin hardware: `python3 -m unittest discover -s tests -p "test_firmware.py"` desde `Nest`.
+Pruebas sin hardware: `python3 -m unittest discover -s tests -p "test_firmware*.py"` desde `Nest`.
+
+## Búfer sin conexión: límites
+- Con red, la cola se escribe a la flash solo cuando cambia, no en cada lectura. Si se corta la energía con red, pueden perderse las lecturas aún no guardadas (unos 2 s).
+- Si la placa reinicia sin red, no puede captar eventos nuevos hasta sincronizar la hora por NTP, porque cada evento lleva su hora real.
+- Líneas dañadas o cortadas del archivo se ignoran. Un evento que el servidor rechaza para siempre se descarta para no bloquear la cola.
+- Las pruebas (`test_firmware_cola.py`) usan sustitutos de `machine`, `dht`, `network` y `ntptime`. No prueban la flash ni el Wi-Fi reales.

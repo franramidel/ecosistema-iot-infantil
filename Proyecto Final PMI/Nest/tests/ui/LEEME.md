@@ -16,3 +16,7 @@ Debe terminar con `UI OK`. Usa el puerto 8765 y una base temporal propia.
 ## Tarjeta de Telegram
 
 Con el mismo servidor, `node <ruta-a-Nest>\tests\ui\verificar_telegram.js <ruta-a-Nest>` prueba la tarjeta de Telegram. Reinicia `servidor.py` antes de cada verificación para partir de una base limpia. Debe terminar con `UI OK`.
+
+## Sprint 2 (auditoría, gráfica, control)
+
+`node <ruta-a-Nest>\tests\ui\verificar_sprint2.js <ruta-a-Nest>` prueba la consola de auditoría, la gráfica con rangos y umbrales, el control (sueño, tomas, ajustes, módulos) y el aislamiento al cambiar de bebé. Si `jsdom` está instalado fuera de `Nest`, apunta `NODE_PATH` a su `node_modules`. Reinicia `servidor.py` antes de correrlo. Debe terminar con `UI OK`. Es jsdom: no mide el dibujo real del canvas.

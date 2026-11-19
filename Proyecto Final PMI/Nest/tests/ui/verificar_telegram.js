@@ -24,7 +24,8 @@ async function pantalla(email, password) {
   const w = dom.window;
   w.fetch = (p, o) => f(p, o && o.method === "POST" ? {...o, headers: {...o.headers, Origin: base}} : o);
   w.EventSource = class { constructor() {} close() {} addEventListener() {} };
-  w.HTMLCanvasElement.prototype.getContext = () => ({scale() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, arc() {}, fill() {}});
+  const lienzo = new Proxy({}, {get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { t[k] = v; return true; }});  // el gráfico usa más métodos del canvas
+  w.HTMLCanvasElement.prototype.getContext = () => lienzo;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.eval(js);
   await sleep(300);

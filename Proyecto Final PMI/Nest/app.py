@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from cuna import exportar
+from cuna import exportar, panel
 from cuna.auditoria import consulta, evento
 from cuna.cloud import Cloud
 from cuna.common import Problem, device_id, field, member_input, reading
@@ -192,6 +192,14 @@ class Handler(BaseHTTPRequestHandler):
             self.response(self.umbrales().umbrales(session,child))
         elif path == "/api/audit":
             self.response(self.server.store.audit_page(session,*consulta(query)))
+        elif path == "/api/history":
+            self.response(self.server.store.history(session,*panel.consulta_historial(query)))
+        elif path in ("/api/sleep","/api/settings","/api/modules"):
+            if not child:
+                raise Problem("Indica el bebé con ?child=.")
+            child = panel.uuid_texto(child)
+            store = self.server.store
+            self.response({"/api/sleep":store.sleep_state,"/api/settings":store.settings,"/api/modules":store.modules}[path](session,child))
         elif path == "/api/stream":
             if self.server.store.sync_mode != "sse":
                 raise Problem("Esta sesión usa Supabase Realtime.",404)
@@ -324,6 +332,18 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.telegram_desvincular(session)
             else:
                 result = store.telegram_probar(session)
+        elif path == "/api/feeding":
+            session = self.server.session(self.sid())
+            result = store.feeding_log(session,*panel.validar_toma(data))
+        elif path in ("/api/sleep/start","/api/sleep/snapshot","/api/sleep/disarm"):
+            session = self.server.session(self.sid())
+            result = store.sleep_action(session,panel.uuid_texto(data.get("child_id")),path.rsplit("/",1)[1])
+        elif path == "/api/settings":
+            session = self.server.session(self.sid())
+            result = store.settings_save(session,*panel.validar_ajustes(data))
+        elif path == "/api/modules":
+            session = self.server.session(self.sid())
+            result = store.modules_save(session,*panel.validar_modulo(data))
         elif path.startswith("/api/change/"):
             session = self.server.session(self.sid())
             action = path.removeprefix("/api/change/")

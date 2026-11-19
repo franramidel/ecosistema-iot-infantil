@@ -6,11 +6,11 @@
 <section id="login" class="login" hidden><div class="login-intro"><span class="eyebrow">Acceso familiar</span><h1>Tu cuna<br>inteligente.</h1><p>Consulta las lecturas de cada bebé y comparte el cuidado con tu familia.</p></div>
 <form id="signin" class="card stack"><h2>Iniciar sesión</h2><label>Correo electrónico<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar al panel</button></form></section>
 <div id="dashboard" hidden>
-<nav aria-label="Secciones"><button data-tab="profile" class="active">Ficha del bebé</button><button data-tab="hardware">Dispositivos</button><button data-tab="people" id="people-tab">Personas</button></nav>
+<nav aria-label="Secciones"><button data-tab="profile" class="active">Ficha del bebé</button><button data-tab="hardware">Dispositivos</button><button data-tab="control">Control</button><button data-tab="people" id="people-tab">Personas</button><button data-tab="audit" id="audit-tab">Auditoría</button></nav>
 <section id="profile"><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1 id="child-title">Ficha del bebé</h1></div><div class="actions"><label id="selector-box">Bebé seleccionado<select id="selector"></select></label><button id="add-child" class="secondary">Nuevo perfil</button></div></div>
 <div id="empty-profile" class="card"><h2>Aún no hay perfiles</h2><p id="empty-help"></p></div>
 <div id="child-panel"><div class="meta"><span id="child-ref"></span><button id="rename" class="link">Editar nombre</button></div>
-<div class="overview"><article class="card"><div class="cardhead"><h2>Lecturas</h2><select id="metric" aria-label="Medida del gráfico"></select></div><div id="latest"></div><canvas id="graph" role="img" aria-label="Historial de lecturas"></canvas><p id="graph-info" class="muted"></p></article><article class="card"><h2>Dispositivos del bebé</h2><div id="child-devices"></div></article></div>
+<div class="overview"><article class="card"><div class="cardhead"><h2>Temperatura y humedad</h2></div><div id="latest"></div><form id="range-form" class="range-form" novalidate><label>Desde<input id="range-from" type="date"></label><label>Hasta<input id="range-to" type="date"></label><button id="range-apply" type="submit" class="secondary">Ver histórico</button><button id="range-live" type="button" class="quiet" hidden>Volver a en vivo</button></form><canvas id="graph" role="img" aria-label="Historial de temperatura y humedad"></canvas><p id="graph-legend" class="legend"></p><p id="graph-info" class="muted" role="status" aria-live="polite"></p></article><article class="card"><h2>Dispositivos del bebé</h2><div id="child-devices"></div></article></div>
 <article class="card"><div class="cardhead"><h2>Historial del bebé</h2><a id="report" class="secondary" download>Exportar CSV</a></div><div id="history"></div></article>
 <article class="card" id="export-card" hidden><div class="cardhead"><h2>Exportar a Excel</h2></div>
 <form id="export-form" class="export-form" novalidate><label>Bebé<select id="export-child" name="child"></select></label><label>Dispositivo<select id="export-device" name="device"></select></label><label>Desde<input id="export-from" name="desde" type="date"></label><label>Hasta<input id="export-to" name="hasta" type="date"></label><button id="export-go" type="submit">Descargar Excel</button></form>
@@ -25,6 +25,35 @@
 <p class="muted">Se avisa por Telegram solo cuando la temperatura supera el máximo o baja del mínimo, y una sola vez por cambio de estado. Un valor igual al límite no alerta. La humedad se muestra, pero no genera alertas. Por defecto: 19 a 22 °C.</p></article>
 </div></section>
 <section id="hardware" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Dispositivos</h1></div><button id="add-device">Registrar dispositivo</button></div><div class="card"><h2>Inventario familiar</h2><div id="inventory"></div></div></section>
+<section id="control" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Control</h1></div><div class="actions"><label id="control-box">Bebé seleccionado<select id="control-selector"></select></label></div></div>
+<div id="control-empty" class="card" hidden><h2>Aún no hay perfiles</h2><p>Crea un perfil de bebé en la ficha para usar estos controles.</p></div>
+<div id="control-panel">
+<article class="card sleep-card" id="sleep-card"><div class="cardhead"><h2>Sesión de sueño</h2><span id="sleep-status" class="status">Consultando…</span></div>
+<div class="sleep-grid"><div><span class="muted">Línea base (100 %)</span><div id="baseline-value" class="metric-value"></div></div><div><span class="muted">Masa agregada actual</span><div id="mass-value" class="metric-value"></div></div></div>
+<div class="tg-actions"><button id="disarm-btn" type="button" class="danger" disabled>Desarmar sesión de sueño</button><button id="snapshot-btn" type="button" disabled>Snapshot</button><button id="sleep-start" type="button" class="secondary" disabled>Iniciar sesión de sueño</button></div>
+<p id="sleep-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">La masa agregada es bebé + ropa + cobijas + juguetes, tal como la informa el colchón en gramos (Masa, g). Snapshot guarda la última lectura como línea base de la sesión activa. Desarmar cierra la sesión en el sistema: no envía ningún comando al hardware.</p></article>
+<article class="card" id="modules-card"><div class="cardhead"><h2>Panel de control</h2></div><div id="modules-list"></div><p id="modules-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">Se guarda el estado lógico de cada módulo por bebé. Encender, apagar o cambiar de modo no acciona hardware. El modo programado se guarda, pero todavía no hay editor de horarios.</p></article>
+<article class="card" id="settings-card"><div class="cardhead"><h2>Luces y audio</h2></div>
+<form id="settings-form" class="thr-form" novalidate><label>Velocidad de transición del LED (s)<input id="led-speed" type="number" min="0.5" max="60" step="0.5" required></label>
+<label>Audio<select id="audio-select"></select></label><label>Volumen: <output id="volume-out">30</output> %<input id="volume" type="range" min="0" max="100" step="1"></label>
+<button id="settings-save" type="submit">Guardar ajustes</button></form>
+<p id="settings-msg" class="muted" role="status" aria-live="polite"></p>
+<div class="voice"><button id="voice-btn" type="button" class="secondary" disabled>Llamada de voz</button><p id="voice-msg" class="muted">Solo la interfaz: el servidor no tiene WebSocket ni WebRTC ni audio, así que no hay llamada real.</p></div>
+<p class="muted">Los ajustes se guardan por bebé, pero ningún dispositivo los lee todavía: no cambian la luz ni el sonido reales. El rango de temperatura se configura en la ficha del bebé (por defecto 19 a 22 °C).</p></article>
+<article class="card" id="feed-card"><div class="cardhead"><h2>Registro de tomas</h2><span id="feed-baby" class="muted"></span></div>
+<div id="feed-clock" class="metric-value" role="timer" aria-live="off">00:00</div>
+<form id="feed-form" class="thr-form" novalidate><label>Volumen<input id="feed-volume" type="number" min="0.1" max="2000" step="0.1" inputmode="decimal"></label>
+<label>Unidad<select id="feed-unit"><option value="ml">ml</option><option value="g">g</option></select></label>
+<button id="feed-start" type="button">Start Feeding</button><button id="feed-stop" type="button" class="secondary" hidden>Detener</button><button id="feed-save" type="submit" hidden>Guardar toma</button><button id="feed-discard" type="button" class="quiet" hidden>Descartar</button></form>
+<p id="feed-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">Al guardar, la toma queda en la auditoría del bebé con su duración y volumen. Si recargas la página con la toma en curso, el cronómetro se pierde. La auditoría ata cada evento a un dispositivo, así que el bebé necesita uno asignado.</p></article>
+</div></section>
+<section id="audit" hidden><div class="titlebar"><div><span class="eyebrow">Solo administradores</span><h1>Auditoría</h1></div></div>
+<article class="card"><form id="audit-form" class="export-form" novalidate><label>Bebé<select id="audit-child"></select></label><label>Dispositivo<select id="audit-device"></select></label><label>Desde<input id="audit-from" type="date"></label><label>Hasta<input id="audit-to" type="date"></label><button id="audit-go" type="submit">Buscar</button><button id="audit-export" type="button" class="secondary">Exportar a Excel</button></form>
+<p id="audit-status" class="muted" role="status" aria-live="polite"></p><div id="audit-table" class="scroll"></div><div class="tg-actions"><button id="audit-more" type="button" class="secondary" hidden>Cargar más</button></div>
+<p class="muted">Orden cronológico, del más antiguo al más reciente. Las fechas son inclusivas y usan la hora de Costa Rica. La exportación usa estos mismos filtros.</p></article></section>
 <section id="people" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Personas</h1></div><button id="add-member">Crear cuenta</button></div><div class="card"><h2>Acceso a la familia</h2><div id="members"></div></div></section>
 </div></main>
 <div id="notice" role="status" aria-live="polite" hidden></div>

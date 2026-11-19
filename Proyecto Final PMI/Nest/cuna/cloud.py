@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from . import notificaciones
+from . import notificaciones, panel
 from .auditoria import codificar
 from .common import Problem, device_secret
 
@@ -207,6 +207,43 @@ class Cloud:
         continua = len(rows) > limit or (exportando and rows)
         next_token = codificar(rows[min(limit, len(rows)) - 1]) if continua else None
         return {"items": [{k: v for k, v in r.items() if k != "seq"} for r in rows[:limit]], "next": next_token}
+
+    # Sprint 2 (SCRUM-54, 35, 51, 57, 56). Mismo contrato que Local. Cada operación es una función de
+    # supabase/009_panel_sprint2.sql que toma actor y familia del JWT. El parámetro `ahora` solo existe por compatibilidad.
+    def rpc_panel(self, session, funcion, **argumentos):
+        return self.request("/rest/v1/rpc/" + funcion, argumentos, self.access(session))
+
+    def history(self, session, child, filtros, after, limite):
+        inicio, fin = panel.rango_utc(filtros.get("desde"), filtros.get("hasta"))
+        filas = self.rpc_panel(session, "cuna_history", child=child, from_at=inicio, to_at=fin,
+                               metric_name=filtros.get("metric"), after_at=after[0] if after else None,
+                               after_id=after[1] if after else None, lim=limite + 1)
+        return panel.pagina_historial(filas, limite)
+
+    def sleep_state(self, session, child, ahora=None):
+        return self.rpc_panel(session, "cuna_sleep_state", child=child)
+
+    def sleep_action(self, session, child, accion, ahora=None):
+        funcion = {"start": "cuna_sleep_start", "snapshot": "cuna_sleep_snapshot", "disarm": "cuna_sleep_disarm"}.get(accion)
+        if not funcion:
+            raise Problem("Operación desconocida.", 404)
+        return self.rpc_panel(session, funcion, child=child)
+
+    def feeding_log(self, session, child, event_id, duracion, volumen, unidad, ahora=None):
+        return self.rpc_panel(session, "cuna_log_feeding", child=child, event_id=event_id, duration_s=duracion,
+                              volume=volumen, unit=unidad)
+
+    def settings(self, session, child):
+        return self.rpc_panel(session, "cuna_get_settings", child=child)
+
+    def settings_save(self, session, child, velocidad, audio, volumen, ahora=None):
+        return self.rpc_panel(session, "cuna_set_settings", child=child, led=velocidad, audio_name=audio, vol=volumen)
+
+    def modules(self, session, child):
+        return self.rpc_panel(session, "cuna_get_modules", child=child)
+
+    def modules_save(self, session, child, modulo, encendido, modo, ahora=None):
+        return self.rpc_panel(session, "cuna_set_module", child=child, module_name=modulo, on_off=encendido, mode_name=modo)
 
     # Telegram (SCRUM-24). Mismo contrato que Local. Las acciones del usuario llaman funciones que usan
     # auth.uid() con el token de la sesión. Solo el procesador y solicitar_notificacion usan la clave de

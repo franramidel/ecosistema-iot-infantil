@@ -36,7 +36,12 @@ def confirmado(args, cfg):
     if not sys.stdin.isatty():
         print("No hay terminal para confirmar. Repite con --confirmo-escribir-en-supabase si es un proyecto de pruebas.")
         return False
-    return input(f"Para continuar escribe {FRASE}: ").strip() == FRASE
+    try:
+        respuesta = input(f"Para continuar escribe {FRASE}: ").strip()
+    except EOFError:
+        print("No se recibió confirmación. Repite con --confirmo-escribir-en-supabase si es un proyecto de pruebas.")
+        return False
+    return respuesta == FRASE
 
 
 def main(argv=None):
