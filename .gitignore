@@ -224,3 +224,9 @@ __marimo__/
 
 secrets.py
 .env
+
+# Respaldos y copias previas a una restauración: contienen datos de menores
+Proyecto Final PMI/Nest/datos/respaldos/
+Proyecto Final PMI/Nest/datos/*.antes-de-restaurar-*
+*.sqlite3.parcial
+*.sqlite3.restaurando
