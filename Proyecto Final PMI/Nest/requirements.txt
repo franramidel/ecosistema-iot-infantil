@@ -1,0 +1,5 @@
+# Única dependencia externa del proyecto, necesaria solo para la exportación a Excel (SCRUM-23).
+# openpyxl 3.1 trae el modo write_only (escritura por lotes con memoria constante), formatos de fecha y
+# hora por celda y filtros automáticos. Se prueba con 3.1.5. Se fija por debajo de 4 porque una versión
+# mayor puede cambiar esa API. La demo y el resto del sistema usan solo la biblioteca estándar.
+openpyxl>=3.1,<4

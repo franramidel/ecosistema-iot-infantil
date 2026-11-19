@@ -34,7 +34,7 @@ async function api(path, body) {
 function showLogin() {
   generation++;
   stopSync();
-  state = null; chosen = null; tab = "profile";
+  state = null; chosen = null; tab = "profile"; thrFor = null;
   if ($("modal").open) $("modal").close();
   $("account").hidden = $("dashboard").hidden = true;
   $("login").hidden = false;
@@ -282,6 +282,12 @@ function render() {
   const rows = state.events;
   $("history").innerHTML = rows.length ? '<div class="scroll"><table><thead><tr><th>Fecha de captura</th><th>Device_ID</th><th>Medida</th><th>Lectura</th></tr></thead><tbody>'+
     rows.map(e=>'<tr><td>'+esc(date(e.captured_at))+'</td><td>'+esc(e.device_id)+'</td><td>'+esc(e.metric)+'</td><td>'+fmt(e.value)+' '+esc(e.unit)+'</td></tr>').join("")+'</tbody></table></div>' : empty("Las lecturas aparecerán aquí cuando el dispositivo envíe datos.");
+  renderExport();
+  $("thr-card").hidden = !child;
+  for (const id of ["thr-min","thr-max"]) $(id).disabled = !admin();
+  $("thr-save").hidden = !admin();
+  loadThresholds();
+  loadTelegram();
   draw();
 }
 function draw() {
@@ -308,6 +314,120 @@ function draw() {
   for (const [x,y] of points) {ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();}
   canvas.setAttribute("aria-label",last.metric+"; mínimo "+fmt(low)+", máximo "+fmt(high)+" "+last.unit);
 }
+function tgMsg(text, error=false) { $("tg-msg").textContent = text; $("tg-msg").classList.toggle("error", error); }
+function renderTelegram(t) {
+  const linked = t.vinculado;
+  $("tg-state").textContent = linked
+    ? (t.bloqueado ? "Vinculado, pero Telegram indica que bloqueaste el bot. Desbloquéalo y envía una prueba." : "Telegram vinculado.")
+    : "Telegram no está vinculado.";
+  $("tg-link-btn").hidden = linked;
+  $("tg-test-btn").hidden = !linked;
+  $("tg-unlink-btn").hidden = !linked;
+  if (linked || !t.codigo_expira) $("tg-code").hidden = true;
+  if (linked) {
+    const last = t.ultima_prueba;
+    tgMsg(t.procesador_activo ? "El procesador de alertas está activo." : "El procesador de alertas no está activo. Inicia telegram_worker.py.", !t.procesador_activo);
+    if (last) $("tg-msg").textContent += " Última prueba: " + ({pendiente:"en cola",procesando:"enviando",enviada:"enviada",error_recuperable:"reintentando",error_permanente:"fallida",sin_vinculo:"sin vínculo"}[last.estado] || last.estado) + ".";
+  }
+}
+async function loadTelegram() {
+  try { renderTelegram(await api("/api/telegram")); }
+  catch (err) { $("tg-state").textContent = err.message; }
+}
+async function tgAction(button, path, done) {
+  button.disabled = true;
+  try { const res = await api(path, {}); done?.(res); await loadTelegram(); }
+  catch (err) { tgMsg(err.message, true); }
+  finally { button.disabled = false; }
+}
+$("tg-link-btn").onclick = () => tgAction($("tg-link-btn"), "/api/telegram/link", res => {
+  $("tg-code-value").textContent = res.codigo;
+  $("tg-code").hidden = false;
+  const link = $("tg-link");
+  link.hidden = !res.enlace;
+  if (res.enlace) link.href = res.enlace;
+  tgMsg("Código generado. Envíalo al bot y pulsa Actualizar estado.");
+});
+$("tg-unlink-btn").onclick = () => tgAction($("tg-unlink-btn"), "/api/telegram/unlink", () => tgMsg("Telegram desvinculado."));
+$("tg-test-btn").onclick = () => tgAction($("tg-test-btn"), "/api/telegram/test", () => tgMsg("Prueba en cola. Llegará en unos segundos."));
+$("tg-refresh-btn").onclick = loadTelegram;
+let thrFor = null;
+function thrMsg(text, error=false) { $("thr-msg").textContent = text; $("thr-msg").classList.toggle("error", error); }
+async function loadThresholds(force=false) {
+  const id = chosen;
+  if (!id || (!force && thrFor === id)) return;  // render() corre con cada lectura nueva: no pisar lo que se está escribiendo
+  try {
+    const t = await api("/api/thresholds?child=" + encodeURIComponent(id));
+    if (id !== chosen) return;
+    thrFor = id;
+    $("thr-min").value = t.temp_min; $("thr-max").value = t.temp_max;
+    thrMsg(!admin() ? "Solo un administrador puede cambiar los umbrales." : t.default ? "Usando los valores por defecto." : "");
+  } catch (err) { thrMsg(err.message, true); }
+}
+$("thr-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const min = $("thr-min").value.trim(), max = $("thr-max").value.trim();
+  if (!min || !max || !Number.isFinite(Number(min)) || !Number.isFinite(Number(max))) return thrMsg("Escribe el mínimo y el máximo como números.", true);
+  $("thr-save").disabled = true;
+  try {
+    await api("/api/thresholds", {child_id: chosen, temp_min: Number(min), temp_max: Number(max)});
+    thrMsg("Umbrales guardados. Se aplican desde la próxima lectura.");
+    thrFor = null; await loadThresholds(true);
+    thrMsg("Umbrales guardados. Se aplican desde la próxima lectura.");
+  } catch (err) { thrMsg(err.message, true); }
+  finally { $("thr-save").disabled = false; }
+};
+function renderExport() {
+  $("export-card").hidden = !admin();
+  if (!admin()) return;
+  const child = $("export-child"), device = $("export-device");
+  const first = !child.options.length, prevChild = child.value, prevDevice = device.value;
+  child.innerHTML = '<option value="">Todos los bebés</option>' + options(state.children, null);
+  device.innerHTML = '<option value="">Todos los dispositivos</option>' +
+    state.devices.map(d => '<option value="'+esc(d.id)+'">'+esc(d.name)+' · '+esc(d.id)+'</option>').join("");
+  child.value = first ? (chosen || "") : prevChild;
+  device.value = prevDevice;
+  if (child.value !== (first ? (chosen || "") : prevChild)) child.value = "";
+}
+function exportStatus(msg, error=false) {
+  $("export-status").textContent = msg;
+  $("export-status").classList.toggle("error", error);
+}
+function exportName(res) {
+  const found = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
+  return found ? found[1] : "reporte-nido.xlsx";
+}
+$("export-form").onsubmit = async e => {
+  e.preventDefault();
+  const values = Object.fromEntries(new FormData(e.target));
+  if (values.desde && values.hasta && values.desde > values.hasta) {
+    exportStatus("La fecha inicial no puede ser posterior a la final.", true);
+    $("export-from").focus();
+    return;
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
+  const btn = $("export-go");
+  btn.disabled = true;
+  exportStatus("Generando el archivo. Esto puede tardar si hay muchos registros…");
+  try {
+    let res;
+    try { res = await fetch("/api/export/xlsx" + (params.size ? "?" + params : "")); }
+    catch { throw Error("No se pudo conectar con el servidor."); }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) showLogin();
+      throw Error(data.error || "No se pudo generar el archivo.");
+    }
+    const name = exportName(res), url = URL.createObjectURL(await res.blob());
+    const link = document.createElement("a");
+    link.href = url; link.download = name;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    exportStatus("Descarga lista: " + name);
+  } catch (err) { exportStatus(err.message, true); }
+  finally { btn.disabled = false; }
+};
 $("metric").onchange = draw;
 window.addEventListener("resize",draw);
 function modal(title, html, save, label="Guardar") {
