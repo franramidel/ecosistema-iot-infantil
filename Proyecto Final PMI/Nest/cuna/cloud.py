@@ -3,13 +3,15 @@ import json
 import threading
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .common import Problem, device_secret
 
 
 class Cloud:
+    sync_mode = "realtime"
+
     def __init__(self, url, public_key, secret_key):
         self.url = url.rstrip("/")
         parts = urlsplit(self.url)
@@ -17,6 +19,15 @@ class Cloud:
             raise ValueError("Supabase requiere HTTPS o un servidor local.")
         self.public_key = public_key
         self.secret_key = secret_key
+        self.realtime_scheme = "wss" if parts.scheme == "https" else "ws"
+        self.realtime_origin = self.realtime_scheme + "://" + parts.netloc
+        self.realtime_url = urlunsplit((
+            self.realtime_scheme,
+            parts.netloc,
+            parts.path.rstrip("/") + "/realtime/v1/websocket",
+            urlencode({"apikey": public_key, "vsn": "1.0.0"}),
+            "",
+        ))
 
     def request(self, path, data=None, token=None, admin=False):
         key = self.secret_key if admin else self.public_key
@@ -91,6 +102,16 @@ class Cloud:
         if not rows:
             raise Problem("Cuenta sin acceso.", 403)
         return rows[0]["version"]
+
+    def sync_config(self, session):
+        actor = self.actor(session)
+        return {
+            "mode": self.sync_mode,
+            "url": self.realtime_url,
+            "family_id": actor["family_id"],
+            "access_token": self.access(session),
+            "expires_at": int(session["expires"]),
+        }
 
     def change(self, session, action, p):
         if action == "member":
