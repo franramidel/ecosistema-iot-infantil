@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Nest · Cuna inteligente</title><link rel="stylesheet" href="/estilo.css"><script src="/app.js" defer></script></head>
+<title>Nest · Cuna inteligente</title><link rel="stylesheet" href="/estilo.css"><script src="/app.js" defer></script><script src="/p5.js" defer></script></head>
 <body><header><a class="brand" href="/" aria-label="Nest, inicio"><span class="nest" aria-hidden="true">◒</span> Nest</a><span class="divider"></span><span class="product">Cuna inteligente</span><div id="account" hidden><span id="identity"></span><button id="logout" class="quiet">Salir</button></div></header>
 <main>
 <section id="login" class="login" hidden><div class="login-intro"><span class="eyebrow">Acceso familiar</span><h1>Tu cuna<br>inteligente.</h1><p>Consulta las lecturas de cada bebé y comparte el cuidado con tu familia.</p></div>
 <form id="signin" class="card stack"><h2>Iniciar sesión</h2><label>Correo electrónico<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar al panel</button></form></section>
 <div id="dashboard" hidden>
-<nav aria-label="Secciones"><button data-tab="profile" class="active">Ficha del bebé</button><button data-tab="hardware">Dispositivos</button><button data-tab="control">Control</button><button data-tab="people" id="people-tab">Personas</button><button data-tab="audit" id="audit-tab">Auditoría</button></nav>
+<nav aria-label="Secciones"><button data-tab="profile" class="active">Ficha del bebé</button><button data-tab="hardware">Dispositivos</button><button data-tab="control">Control</button><button data-tab="feeding">Alimentación</button><button data-tab="photos">Fotos</button><button data-tab="people" id="people-tab">Personas</button><button data-tab="audit" id="audit-tab">Auditoría</button></nav>
 <section id="profile"><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1 id="child-title">Ficha del bebé</h1></div><div class="actions"><label id="selector-box">Bebé seleccionado<select id="selector"></select></label><button id="add-child" class="secondary">Nuevo perfil</button></div></div>
 <div id="empty-profile" class="card"><h2>Aún no hay perfiles</h2><p id="empty-help"></p></div>
 <div id="child-panel"><div class="meta"><span id="child-ref"></span><button id="rename" class="link">Editar nombre</button></div>
@@ -40,7 +40,8 @@
 <label>Audio<select id="audio-select"></select></label><label>Volumen: <output id="volume-out">30</output> %<input id="volume" type="range" min="0" max="100" step="1"></label>
 <button id="settings-save" type="submit">Guardar ajustes</button></form>
 <p id="settings-msg" class="muted" role="status" aria-live="polite"></p>
-<div class="voice"><button id="voice-btn" type="button" class="secondary" disabled>Llamada de voz</button><p id="voice-msg" class="muted">Solo la interfaz: el servidor no tiene WebSocket ni WebRTC ni audio, así que no hay llamada real.</p></div>
+<div class="voice"><button id="voice-btn" type="button" class="secondary" disabled>Llamada de voz</button><p id="voice-msg" class="muted" role="status" aria-live="polite"></p></div><audio id="voice-audio" autoplay></audio>
+<p id="voice-stats" class="muted" role="status" aria-live="off"></p><p class="muted">La voz viaja por WebRTC directo entre este navegador y la cuna; el servidor solo intercambia la señalización. Para probar sin hardware, abre <a href="/cuna-voz" target="_blank" rel="noopener">la cuna simulada</a> en otra pestaña o dispositivo con la sesión iniciada. Necesita permiso de micrófono y <code>localhost</code> o HTTPS.</p>
 <p class="muted">Los ajustes se guardan por bebé, pero ningún dispositivo los lee todavía: no cambian la luz ni el sonido reales. El rango de temperatura se configura en la ficha del bebé (por defecto 19 a 22 °C).</p></article>
 <article class="card" id="feed-card"><div class="cardhead"><h2>Registro de tomas</h2><span id="feed-baby" class="muted"></span></div>
 <div id="feed-clock" class="metric-value" role="timer" aria-live="off">00:00</div>
@@ -50,6 +51,28 @@
 <p id="feed-msg" class="muted" role="status" aria-live="polite"></p>
 <p class="muted">Al guardar, la toma queda en la auditoría del bebé con su duración y volumen. Si recargas la página con la toma en curso, el cronómetro se pierde. La auditoría ata cada evento a un dispositivo, así que el bebé necesita uno asignado.</p></article>
 </div></section>
+<section id="feeding" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Alimentación</h1></div><div class="actions"><label id="feeding-box">Bebé seleccionado<select id="feeding-selector"></select></label></div></div>
+<div id="feeding-empty" class="card" hidden><h2>Aún no hay perfiles</h2><p>Crea un perfil de bebé en la ficha para ver su alimentación.</p></div>
+<div id="feeding-panel" class="stack-cards">
+<article class="card" id="bottle-card"><div class="cardhead"><h2>Temperatura del biberón</h2><span id="bottle-status" class="status">Consultando…</span></div>
+<div id="bottle-value" class="metric-value">—</div><p id="bottle-detail" class="muted"></p>
+<p id="bottle-alert" class="bottle-alert" role="alert" hidden></p>
+<form id="bottle-form" class="thr-form" novalidate><label>Mínimo (°C)<input id="bottle-min" type="number" step="0.5" min="0" max="100" required></label><label>Máximo (°C)<input id="bottle-max" type="number" step="0.5" min="0" max="100" required></label><button id="bottle-save" type="submit">Guardar límites</button></form>
+<p id="bottle-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">El sensor envía la medida <code>TemperaturaBiberon</code> en °C. Por defecto el rango seguro es de 36 a 40 °C (objetivo 37 °C): por debajo se avisa «muy frío» y por encima «muy caliente», una sola vez por cambio de estado, también por Telegram. Los límites exactos no alertan.</p></article>
+<article class="card" id="reminders-card"><div class="cardhead"><h2>Recordatorios de toma</h2></div><div id="reminders-list"></div>
+<form id="rem-form" class="thr-form" novalidate><label>Tipo<select id="rem-kind"><option value="interval">Cada cierto tiempo</option><option value="fixed">A horas fijas</option></select></label>
+<label id="rem-interval-box">Cada (minutos)<input id="rem-interval" type="number" min="15" max="1440" step="5" value="180"></label>
+<label id="rem-times-box" hidden>Horas (HH:MM, separadas por coma)<input id="rem-times" type="text" placeholder="08:00, 11:00, 14:00" maxlength="80"></label>
+<button id="rem-add" type="submit">Agregar recordatorio</button></form>
+<p id="rem-msg" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">Los avisos llegan a Telegram desde el procesador (<code>python telegram_worker.py</code>), aunque esta página esté cerrada. Las horas fijas usan la hora de Costa Rica. Si el procesador estuvo apagado se envía un solo aviso, no una ráfaga.</p></article>
+</div></section>
+<section id="photos" hidden><div class="titlebar"><div><span class="eyebrow">Kit de seguridad</span><h1>Fotos</h1></div><div class="actions"><label id="photo-box">Bebé seleccionado<select id="photo-selector"></select></label></div></div>
+<div id="photo-empty" class="card" hidden><h2>Aún no hay perfiles</h2><p>Crea un perfil de bebé en la ficha para ver sus fotos.</p></div>
+<article class="card" id="photo-panel"><div id="photo-grid" class="photo-grid"></div><p id="photo-msg" class="muted" role="status" aria-live="polite"></p>
+<div class="tg-actions"><button id="photo-more" type="button" class="secondary" hidden>Cargar más</button><button id="photo-refresh" type="button" class="quiet">Actualizar</button></div>
+<p class="muted">Las fotos están en un almacén privado. Esta página recibe enlaces firmados que vencen a los 5 minutos y solo funcionan con la sesión de la familia; no existe ninguna URL pública. Cada foto queda registrada en la auditoría y no se puede modificar ni borrar.</p></article></section>
 <section id="audit" hidden><div class="titlebar"><div><span class="eyebrow">Solo administradores</span><h1>Auditoría</h1></div></div>
 <article class="card"><form id="audit-form" class="export-form" novalidate><label>Bebé<select id="audit-child"></select></label><label>Dispositivo<select id="audit-device"></select></label><label>Desde<input id="audit-from" type="date"></label><label>Hasta<input id="audit-to" type="date"></label><button id="audit-go" type="submit">Buscar</button><button id="audit-export" type="button" class="secondary">Exportar a Excel</button></form>
 <p id="audit-status" class="muted" role="status" aria-live="polite"></p><div id="audit-table" class="scroll"></div><div class="tg-actions"><button id="audit-more" type="button" class="secondary" hidden>Cargar más</button></div>
@@ -57,5 +80,6 @@
 <section id="people" hidden><div class="titlebar"><div><span class="eyebrow">Panel familiar</span><h1>Personas</h1></div><button id="add-member">Crear cuenta</button></div><div class="card"><h2>Acceso a la familia</h2><div id="members"></div></div></section>
 </div></main>
 <div id="notice" role="status" aria-live="polite" hidden></div>
+<dialog id="photo-dialog"><div class="stack"><div class="cardhead"><h2 id="photo-title">Foto</h2><button class="quiet" id="photo-close" type="button">Cerrar</button></div><img id="photo-big" alt="Foto ampliada del kit de seguridad"><p id="photo-cap" class="muted"></p></div></dialog>
 <dialog id="modal"><form id="editor" class="stack"><div class="cardhead"><h2 id="modal-title"></h2><button class="quiet" id="close" aria-label="Cerrar" type="button">Cerrar</button></div><div class="stack" id="fields"></div><p id="form-error" role="alert" hidden></p><button id="confirm">Guardar</button></form></dialog>
 </body></html>

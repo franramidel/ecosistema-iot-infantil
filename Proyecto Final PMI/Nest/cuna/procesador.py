@@ -46,6 +46,12 @@ class Procesador:
 
     def procesar_cola(self, limite=10):
         cuenta = {"enviadas": 0, "reintentos": 0, "permanentes": 0}
+        # SCRUM-52: antes de reclamar la cola, los recordatorios de toma vencidos entran a ella (si el almacén los soporta).
+        if hasattr(self.store, "recordatorios_disparar"):
+            try:
+                self.store.recordatorios_disparar(self.reloj())
+            except Problem as exc:
+                self.registrar(f"No se pudieron revisar los recordatorios de toma ({exc.status}).")
         trabajos = self.store.cola_reclamar(uid(), limite, ahora=self.reloj())
         for trabajo in trabajos:
             if self.token_invalido:

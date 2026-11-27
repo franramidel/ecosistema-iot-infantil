@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nest · Cuna simulada (voz)</title><link rel="stylesheet" href="/estilo.css"><script src="/cuna-voz.js" defer></script></head>
+<body><header><a class="brand" href="/" aria-label="Nest, inicio"><span class="nest" aria-hidden="true">◒</span> Nest</a><span class="divider"></span><span class="product">Cuna simulada · voz</span></header>
+<main class="cuna-page"><article class="card">
+<h1>Cuna simulada</h1>
+<p class="muted">Hace de altavoz y micrófono de la cuna para probar la voz bidireccional sin hardware. Inicia sesión primero en <a href="/">el panel</a> (misma familia, con permiso para operar) y abre esta página en otra pestaña o dispositivo.</p>
+<label>Bebé de esta cuna<select id="child"></select></label>
+<div class="tg-actions"><button id="listen" type="button">Poner la cuna a la escucha</button><button id="stop" type="button" class="secondary" hidden>Detener</button></div>
+<p id="status" class="muted" role="status" aria-live="polite"></p>
+<audio id="speaker" autoplay></audio>
+<p class="muted">El audio no pasa por el servidor: va directo entre navegadores por WebRTC. En otro dispositivo necesitas HTTPS para el micrófono.</p>
+</article></main></body></html>

@@ -41,6 +41,7 @@ function showLogin() {
   rangeMode = false; histData = null; chartThr = null; histEpoch++; controlEpoch++; auditEpoch++;
   auditRows = []; auditNext = null; auditLoaded = false; auditSig = ""; settingsFor = null; appliedRange = {}; histError = null;
   $("range-live").hidden = true; feedReset();
+  if (typeof p5Reset === "function") p5Reset();
   if ($("modal").open) $("modal").close();
   $("account").hidden = $("dashboard").hidden = true;
   $("login").hidden = false;
@@ -245,7 +246,7 @@ document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => {
 });
 function setTabs() {
   if (!admin() && (tab === "people" || tab === "audit")) tab = "profile";
-  for (const id of ["profile","hardware","control","people","audit"]) $(id).hidden = tab !== id;
+  for (const id of ["profile","hardware","control","feeding","photos","people","audit"]) $(id).hidden = tab !== id;
   document.querySelectorAll("[data-tab]").forEach(b => {
     b.classList.toggle("active",b.dataset.tab === tab);
     if (b.dataset.tab === tab) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
@@ -297,6 +298,7 @@ function render() {
   if (tab === "audit") renderAuditFilters();
   scheduleHistory();
   draw();
+  if (typeof p5Render === "function") p5Render();  // Persona 5: alimentación, fotos y voz (web/p5.js)
 }
 // --- SCRUM-54: temperatura y humedad juntas, con rango histórico y umbrales marcados -------------------------------
 const COLOR_TEMP = "#b4532a", COLOR_HUM = "#2563a8";

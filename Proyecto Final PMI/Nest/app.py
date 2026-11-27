@@ -14,14 +14,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from cuna import exportar, panel
+from cuna import alimentacion, exportar, fotos, panel
+from cuna import voz as canal_voz
 from cuna.auditoria import consulta, evento
 from cuna.cloud import Cloud
 from cuna.common import Problem, device_id, field, member_input, reading
 from cuna.local import Local
 
 ROOT = Path(__file__).resolve().parent
-STATIC = {"/": ("index.html","text/html"), "/app.js": ("app.js","text/javascript"), "/estilo.css": ("estilo.css","text/css")}
+STATIC = {"/": ("index.html","text/html"), "/app.js": ("app.js","text/javascript"), "/estilo.css": ("estilo.css","text/css"),
+          "/p5.js": ("p5.js","text/javascript"), "/cuna-voz": ("cuna-voz.html","text/html"), "/cuna-voz.js": ("cuna-voz.js","text/javascript")}
 
 
 def settings():
@@ -70,6 +72,9 @@ class Application(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.store, self.secure = store, secure
         self.bot_username = None  # solo para mostrar el enlace t.me; el servidor nunca conoce el token
+        self.canales = canal_voz.Canales()   # señalización de voz (SCRUM-31 B), solo en memoria
+        self.ice_servers = []                # STUN/TURN opcionales; vacío = solo red local
+        self.photo_secret = os.environ.get("CUNA_PHOTO_SECRET", "").encode() or secrets.token_bytes(32)
         self.sessions = {}
         self.condition = threading.Condition()
         self.revision = 0
@@ -219,6 +224,24 @@ class Handler(BaseHTTPRequestHandler):
                 after = rows[-1]["id"]
             self.response(out.getvalue().encode("utf-8-sig"),"text/csv",headers={
                 "Content-Disposition":'attachment; filename="historial.csv"'})
+        elif path == "/api/bottle":
+            self.response(self.p5("bottle_state")(session, panel.uuid_texto(child) if child else self.pedir_bebe()))
+        elif path == "/api/reminders":
+            self.response(self.p5("reminders")(session, panel.uuid_texto(child) if child else self.pedir_bebe()))
+        elif path == "/api/photos":
+            hijo, limite, antes = fotos.consulta_galeria(query)
+            salida = self.p5("photo_list")(session, hijo, limite, antes)
+            ahora = time.time()
+            for item in salida["items"]:   # URL firmadas y con vencimiento: no hay ninguna URL pública (RNF-SEG-04)
+                item["url"], item["expires"] = fotos.url_firmada(self.server.photo_secret, item["id"], ahora)
+            self.response(salida)
+        elif path == "/api/photo":
+            ident = panel.uuid_texto(query.get("id", [None])[0], "Enlace de imagen no válido.")
+            fotos.verificar_url(self.server.photo_secret, ident, query.get("exp", [None])[0], query.get("sig", [None])[0], time.time())
+            tipo, datos = self.p5("photo_read")(session, ident)
+            self.response(datos, tipo, headers={"Content-Disposition": "inline"})
+        elif path == "/api/voice/config":
+            self.response({"ice_servers": [{"urls": self.server.ice_servers}] if self.server.ice_servers else []})
         elif path == "/api/telegram":
             self.response({**self.telegram().telegram_estado(session),"bot":self.server.bot_username})
         elif path == "/api/export/xlsx":
@@ -271,6 +294,52 @@ class Handler(BaseHTTPRequestHandler):
             raise Problem("Este almacén de datos no admite Telegram.",501)
         return store
 
+    def p5(self, nombre):
+        """Métodos de la Persona 5. Solo los implementa la demo local; Supabase responde 501."""
+        metodo = getattr(self.server.store, nombre, None)
+        if metodo is None:
+            raise Problem("Este almacén de datos aún no admite esta función.", 501)
+        return metodo
+
+    @staticmethod
+    def pedir_bebe():
+        raise Problem("Indica el bebé con ?child=.")
+
+    def subir_foto(self):
+        """POST /api/photos: imagen cruda de la cámara. Encabezados: Authorization (clave del dispositivo), X-Device-Id,
+        X-Event-Id (UUID, idempotencia) y X-Captured-At (ISO 8601 con zona)."""
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != self.headers.get("Host", "").lower():
+            raise Problem("Origen no permitido.", 403)
+        clave = self.device_key()
+        try:
+            largo = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            largo = 0
+        if not 1 <= largo <= fotos.MAX_BYTES:
+            raise Problem("La imagen debe pesar entre 1 byte y 5 MB.", 413)
+        datos = self.rfile.read(largo)
+        dispositivo = device_id({"device_id": self.headers.get("X-Device-Id", "")})
+        foto, cuando, tipo = fotos.validar_subida(self.headers, datos)
+        return self.p5("photo_ingest")(dispositivo, clave, foto, cuando, tipo, datos)
+
+    def voz(self, path, data):
+        """Señalización WebRTC. La app usa su sesión; una cuna real, la clave del dispositivo. Nunca pasa audio por aquí."""
+        autorizacion = self.headers.get("Authorization", "")
+        con_clave = autorizacion.startswith("Bearer ") and bool(autorizacion[7:])
+        if con_clave:
+            bebe = self.p5("voice_device")(device_id(data), autorizacion[7:])
+        else:
+            sesion = self.server.session(self.sid())
+            bebe = panel.uuid_texto(data.get("child_id"))
+            self.p5("voice_session")(sesion, bebe)
+        if path == "/api/voice/signal":
+            rol, tipo, datos = canal_voz.validar_senal(data, con_clave)
+            return self.server.canales.enviar(bebe, rol, tipo, datos)
+        rol = "cuna" if con_clave else data.get("role")
+        despues, espera = canal_voz.validar_espera(data)
+        return self.server.canales.esperar(bebe, rol, despues, espera)
+
     def device_key(self):
         """Clave del dispositivo para /api/audit/events. /api/events conserva su propia comprobación original."""
         authorization = self.headers.get("Authorization","")
@@ -279,6 +348,11 @@ class Handler(BaseHTTPRequestHandler):
         return authorization[7:]
 
     def post(self,path):
+        if path == "/api/photos":
+            result = self.subir_foto()
+            self.server.changed()
+            self.response(result)
+            return
         if self.headers.get_content_type() != "application/json":
             raise Problem("Se requiere JSON.",415)
         origin = self.headers.get("Origin")
@@ -294,6 +368,9 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             raise Problem("Cuerpo JSON inválido.")
         store = self.server.store
+        if path in ("/api/voice/signal", "/api/voice/poll"):
+            self.response(self.voz(path, data))   # sin changed(): la señalización no es un cambio de datos
+            return
         if path == "/api/login":
             email = data.get("email")
             password = data.get("password")
@@ -332,6 +409,18 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.telegram_desvincular(session)
             else:
                 result = store.telegram_probar(session)
+        elif path == "/api/bottle/thresholds":
+            session = self.server.session(self.sid())
+            result = self.p5("bottle_thresholds_save")(session, panel.uuid_texto(data.get("child_id")), data.get("temp_min"), data.get("temp_max"))
+        elif path == "/api/reminders":
+            session = self.server.session(self.sid())
+            hijo, accion = panel.uuid_texto(data.get("child_id")), data.get("action")
+            if accion == "delete":
+                result = self.p5("reminders_change")(session, hijo, "delete", data.get("id"))
+            elif accion == "save":
+                result = self.p5("reminders_change")(session, hijo, "save", alimentacion.validar_recordatorio(data))
+            else:
+                raise Problem("action debe ser save o delete.")
         elif path == "/api/feeding":
             session = self.server.session(self.sid())
             result = store.feeding_log(session,*panel.validar_toma(data))
@@ -387,6 +476,7 @@ def main():
             store.bootstrap(email,pw)
     server = Application((args.host,args.port),store,cfg.get("CUNA_SECURE_COOKIE")=="1")
     username = (cfg.get("TELEGRAM_BOT_USERNAME") or "").lstrip("@")
+    server.ice_servers = [u.strip() for u in (cfg.get("CUNA_ICE_SERVERS") or "").split(",") if u.strip().startswith(("stun:", "turn:", "turns:"))]
     server.bot_username = username if re.fullmatch(r"[A-Za-z0-9_]{5,32}",username) else None
     print(f"Cuna inteligente · {'Supabase' if args.supabase else 'Demo local'} · http://{args.host}:{server.server_port}",flush=True)
     try:

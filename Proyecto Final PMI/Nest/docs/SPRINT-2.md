@@ -18,7 +18,7 @@ Las historias se implementaron sobre el código existente. No se rehizo SCRUM-15
 - No verificado: Supabase real, la Pico W real (flash, Wi-Fi, NTP), un navegador real y Windows.
 
 ## Límites
-- La llamada de voz es un marcador de interfaz: no hay WebRTC ni audio.
+- La llamada de voz de esta tabla era un marcador; ahora tiene señalización y WebRTC (ver `SPRINT-2-PERSONA-5.md`).
 - Sueño, desarme, módulos y ajustes son estado lógico en la base. Ninguna ruta los envía al hardware, y el firmware aún no los lee.
 - El modo "programado" no tiene editor de horarios: solo se guarda el modo.
 - Una toma necesita un dispositivo asignado, porque `audit_log` exige dispositivo.

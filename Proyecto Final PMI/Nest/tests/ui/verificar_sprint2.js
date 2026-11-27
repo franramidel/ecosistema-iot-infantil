@@ -149,7 +149,7 @@ const visible = (p, id) => !p.d.getElementById(id).hidden;
   ok(b.d.querySelector('#modules-list input[data-module=luz]').checked && b.d.querySelector('#modules-list select[data-module=luz]').value === "programado", "tras recargar la pantalla el estado se conserva");
 
   // --- SCRUM-57: luces y audio
-  ok(a.d.getElementById("voice-btn").disabled && /no hay llamada real/.test(texto(a, "voice-msg")), "el botón de voz es solo interfaz y lo dice");
+  ok(!a.d.getElementById("voice-btn").disabled && /Llamada de voz/.test(a.d.getElementById("voice-btn").textContent), "el botón de voz está activo para quien puede operar (SCRUM-31 B; jsdom no trae WebRTC, así que solo se comprueba el botón)");
   poner(a, "led-speed", "12"); poner(a, "audio-select", "olas"); poner(a, "volume", "65");
   a.d.getElementById("settings-form").dispatchEvent(new a.w.Event("submit", {cancelable: true, bubbles: true})); await sleep(700);
   const ajustes = await (await admin.f("/api/settings?child=" + bebe)).json();

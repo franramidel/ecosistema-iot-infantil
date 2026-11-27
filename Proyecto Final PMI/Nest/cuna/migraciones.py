@@ -7,7 +7,7 @@ queda exactamente como estaba. Ejecutarla de nuevo no cambia ningún UUID ni dup
 """
 import sqlite3
 
-from . import alertas, auditoria, notificaciones, panel, retencion
+from . import alertas, alimentacion, auditoria, fotos, notificaciones, panel, retencion
 
 VERSION = 4
 
@@ -112,6 +112,8 @@ def migrar(ruta, esquema_base, antes_de_confirmar=None):
             ejecutar(db, notificaciones.SCHEMA)
             ejecutar(db, alertas.SCHEMA)
             ejecutar(db, panel.SCHEMA)
+            ejecutar(db, alimentacion.SCHEMA)
+            ejecutar(db, fotos.SCHEMA)
             ejecutar(db, auditoria.BACKFILL)
             rotas = db.execute("pragma foreign_key_check").fetchall()
             if rotas:

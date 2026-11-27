@@ -5,8 +5,9 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
 
-from . import alertas, auditoria, migraciones, notificaciones, panel, retencion
+from . import alertas, alimentacion, auditoria, fotos, migraciones, notificaciones, panel, retencion
 from .common import Problem, device_secret, fingerprint, instant, uid
 
 SCHEMA = """
@@ -44,6 +45,7 @@ class Local:
         self.path = str(path)
         self.dummy = password_hash(uid())
         migraciones.migrar(self.path, SCHEMA)
+        self.fotos = fotos.Almacen(Path(self.path).parent / "fotos")  # carpeta privada de objetos (SCRUM-43 B)
 
     def sync_config(self, session):
         return {"mode": self.sync_mode}
@@ -202,6 +204,10 @@ class Local:
             if metric == alertas.METRICA_TEMPERATURA and unit == alertas.UNIDAD_TEMPERATURA:
                 # RF-NOT-02: el servidor decide la alerta en la misma transacción que guarda la lectura.
                 alertas.evaluar(db, row["family_id"], device, child, at, event_id, value)
+            elif alimentacion.es_biberon(metric, unit):
+                # SCRUM-50 / RF-ALI-01: mismo criterio que la temperatura ambiente, con el rango seguro del biberón.
+                alimentacion.validar_lectura(value)
+                alimentacion.evaluar(db, row["family_id"], device, child, at, event_id, value)
             db.execute("update families set version=version+1 where id=?", (row["family_id"],))
             return {"child_id": child}
 
@@ -425,3 +431,95 @@ class Local:
             if final and bloqueado:
                 notificaciones.marcar_bloqueado(db, trabajo["member_id"], ahora)
             return final
+
+    # Persona 5, Sprint 2: SCRUM-50 y 52 (alimentación), SCRUM-43 parte B (fotos), SCRUM-31 parte B (voz).
+    # Leer: cualquier miembro de la familia. Guardar rangos: administrador. Recordatorios y voz: quien puede operar.
+
+    def bottle_state(self, session, child, ahora=None):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return alimentacion.estado_biberon(db, child, ahora or instant())
+
+    def bottle_thresholds_save(self, session, child, minimo, maximo, ahora=None):
+        with self.connection(True) as db:
+            me = self.actor(db, session)
+            if me["role"] != "admin":
+                raise Problem("Se requiere el rol de administrador.", 403)
+            self.child(db, me["family_id"], child)
+            resultado = alimentacion.guardar_umbrales(db, me["family_id"], child, minimo, maximo, me["id"], ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def reminders(self, session, child):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            return alimentacion.listar_recordatorios(db, child)
+
+    def reminders_change(self, session, child, accion, datos, ahora=None):
+        with self.connection(True) as db:
+            me = self.operador(db, session, child)
+            if accion == "delete":
+                resultado = alimentacion.borrar_recordatorio(db, me["family_id"], child, datos, ahora or instant())
+            else:
+                resultado = alimentacion.guardar_recordatorio(db, me["family_id"], child, me["id"], datos, ahora or instant())
+            self.avisar(db, me["family_id"])
+            return resultado
+
+    def recordatorios_disparar(self, ahora=None):
+        """Lo llama el procesador de Telegram en cada ciclo. Devuelve cuántos recordatorios envió a la cola."""
+        with self.connection(True) as db:
+            return alimentacion.disparar(db, ahora or instant())
+
+    def photo_ingest(self, device, secret, photo_id, at, tipo, datos, ahora=None):
+        """Guarda una foto subida por la cámara. Idempotente por photo_id (= X-Event-Id)."""
+        digest = fotos.hashlib.sha256(datos).hexdigest()
+        with self.connection(True) as db:
+            family = self.authenticate_device(db, device, secret)
+            previa = db.execute("select * from photos where id=?", (photo_id,)).fetchone()
+            if previa:
+                if (previa["device_id"], previa["sha256"], previa["captured_at"]) != (device, digest, at):
+                    raise Problem("El identificador de la foto ya tiene otro contenido.", 409)
+                return {"id": photo_id, "child_id": previa["child_id"], "duplicado": True}
+            # La auditoría resuelve el bebé por la asignación vigente en la fecha de captura (409 si no había).
+            registro = auditoria.registrar(db, family, device, (photo_id, at, fotos.TIPO_EVENTO, fotos.detalle(photo_id, tipo), "info"))
+            ruta = self.fotos.guardar(photo_id, tipo, datos)
+            db.execute("""insert into photos(id,family_id,child_id,device_id,captured_at,content_type,size_bytes,sha256,storage_path,audit_id,created_at)
+                values (?,?,?,?,?,?,?,?,?,?,?)""", (photo_id, family, registro["child_id"], device, at, tipo, len(datos), digest, ruta,
+                                                    registro["id"], ahora or instant()))
+            self.avisar(db, family)
+            return {"id": photo_id, "child_id": registro["child_id"], "duplicado": False, "audit_id": registro["id"]}
+
+    def photo_list(self, session, child, limite, antes):
+        with self.connection() as db:
+            self.lector(db, session, child)
+            where, args = ["child_id=?"], [child]
+            if antes:
+                where.append("(captured_at,id)<(?,?)")
+                args.extend(antes)
+            filas = [dict(r) for r in db.execute(
+                f"select id,device_id,captured_at,content_type,size_bytes from photos where {' and '.join(where)} "
+                "order by captured_at desc,id desc limit ?", (*args, limite + 1))]
+            siguiente = f"{filas[limite - 1]['captured_at']}|{filas[limite - 1]['id']}" if len(filas) > limite else None
+            return {"items": filas[:limite], "next": siguiente}
+
+    def photo_read(self, session, photo_id):
+        """Bytes de una foto, solo para una cuenta de la familia a la que pertenece."""
+        with self.connection() as db:
+            me = self.actor(db, session)
+            fila = db.execute("select content_type from photos where id=? and family_id=?", (photo_id, me["family_id"])).fetchone()
+            if not fila:
+                raise Problem("Foto no disponible.", 404)
+        return fila["content_type"], self.fotos.leer(photo_id, fila["content_type"])
+
+    def voice_session(self, session, child):
+        """La voz abre el micrófono de la habitación: exige poder operar dispositivos."""
+        with self.connection() as db:
+            self.operador(db, session, child)
+
+    def voice_device(self, device, secret, ahora=None):
+        with self.connection() as db:
+            self.authenticate_device(db, device, secret)
+            child = auditoria.bebe_activo(db, device, ahora or instant())
+            if not child:
+                raise Problem("El dispositivo no está asignado a ningún bebé.", 409)
+            return child
