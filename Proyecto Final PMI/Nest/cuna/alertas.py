@@ -115,3 +115,26 @@ def evaluar(db, family, device, child, at, event_id, valor, ahora=None):
         solicitudes.append(notificaciones.encolar(db, miembro["id"], f"temp:{event_id}:{miembro['id']}",
                                                   mensaje, registro["id"], ahora))
     return {"estado": nuevo, "evento": registro["id"], "solicitudes": solicitudes}
+
+
+
+TIPOS_SEGURIDAD = {"MOVIMIENTO_CUARTO": "Movimiento en el cuarto", "APERTURA_PUERTA": "Puerta abierta"}
+
+
+def alerta_seguridad(db, family, device, registro, tipo, at, ahora=None):
+    """Si un dispositivo de seguridad detecta movimiento o apertura, solicita Telegram para cada miembro.
+
+    Debe llamarse en la misma transacción que guardó el evento. Es idempotente: reenviar el mismo evento
+    reutiliza la misma clave y no duplica el aviso. Devuelve None si el tipo no es de seguridad.
+    """
+    titulo = TIPOS_SEGURIDAD.get(tipo)
+    if titulo is None:
+        return None
+    ahora = ahora or instant()
+    mensaje = notificaciones.formatear_alerta(titulo, device, at, "Advertencia")
+    solicitudes = []
+    for miembro in db.execute("select id from members where family_id=? order by id", (family,)).fetchall():
+        solicitudes.append(notificaciones.encolar(db, miembro["id"], f"seg:{registro['id']}:{miembro['id']}",
+                                                  mensaje, registro["id"], ahora))
+    return solicitudes
+
