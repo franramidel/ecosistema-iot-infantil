@@ -216,6 +216,7 @@ class Local:
         with self.connection(True) as db:
             family = self.authenticate_device(db, device, secret)
             result = auditoria.registrar(db, family, device, observation)
+            alertas.alerta_seguridad(db, family, device, result, observation[2], observation[1])
             db.execute("update families set version=version+1 where id=?", (family,))
             return result
 
