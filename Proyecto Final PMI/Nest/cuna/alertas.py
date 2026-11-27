@@ -118,7 +118,7 @@ def evaluar(db, family, device, child, at, event_id, valor, ahora=None):
 
 
 
-TIPOS_SEGURIDAD = {"MOVIMIENTO_CUARTO": "Movimiento en el cuarto", "APERTURA_PUERTA": "Puerta abierta"}
+TIPOS_SEGURIDAD = {"MOVIMIENTO_CUARTO": "Movimiento en el cuarto", "APERTURA_PUERTA": "Puerta abierta", "ALERTA_PESO": "Bebé fuera del colchón"}
 
 
 def alerta_seguridad(db, family, device, registro, tipo, at, ahora=None):
@@ -131,7 +131,7 @@ def alerta_seguridad(db, family, device, registro, tipo, at, ahora=None):
     if titulo is None:
         return None
     ahora = ahora or instant()
-    mensaje = notificaciones.formatear_alerta(titulo, device, at, "Advertencia")
+    mensaje = notificaciones.formatear_alerta(titulo, device, at, "Crítica" if tipo == "ALERTA_PESO" else "Advertencia")
     solicitudes = []
     for miembro in db.execute("select id from members where family_id=? order by id", (family,)).fetchall():
         solicitudes.append(notificaciones.encolar(db, miembro["id"], f"seg:{registro['id']}:{miembro['id']}",
