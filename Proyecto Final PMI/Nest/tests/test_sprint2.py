@@ -477,7 +477,10 @@ class TestArchivosWeb(Base):
         html = (NEST / "web" / "index.html").read_text(encoding="utf-8")
         self.assertIsNone(re.search(r"\sstyle\s*=", html))
         self.assertIsNone(re.search(r"\son[a-z]+\s*=", html))
-        self.assertEqual(len(re.findall(r"<script\b", html)), 1)
+        # Dos scripts, ambos externos y del mismo origen: app.js y p5.js (Persona 5). Ninguno en línea.
+        etiquetas = re.findall(r"<script\b[^>]*>", html)
+        self.assertEqual(len(etiquetas), 2)
+        self.assertTrue(all(re.search(r'\ssrc="/[\w.-]+\.js"', e) for e in etiquetas), etiquetas)
         self.assertNotIn("<script>", html)
         for ident in ("audit-tab", "audit-table", "audit-more", "audit-export", "snapshot-btn", "disarm-btn", "feed-start",
                       "feed-stop", "modules-list", "led-speed", "voice-btn", "graph"):
